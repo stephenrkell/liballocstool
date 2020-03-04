@@ -1,0 +1,15 @@
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+libdir=@libdir@
+includedir=@includedir@
+pkgincludedir=${includedir}/@PACKAGE@
+pkglibdir=@pkglibdir@
+datarootdir=@datarootdir@
+datadir=@datadir@
+
+Name: liballocstool
+Description: ELF, DWARF, source and binary tools for generating type and allocation-site metadata
+Version: 0.1
+Requires: dwarfidl
+Cflags: -I${includedir}/liballocstool
+Libs: -L${libdir} -lallocstool
