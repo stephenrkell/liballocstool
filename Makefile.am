@@ -85,6 +85,3 @@ CC CXX CPP CXXFLAGS LDFLAGS LDLIBS
 if DEBUG
 export DEBUG = 1
 endif
-
-clean:
-	$(MAKE) clean-recursive
