@@ -9,13 +9,14 @@ subconfigs :=
 .PHONY: clean default
 # ----------------------------dwarfidl
 
-dwarfidl/contrib/config.mk:
-	cd dwarfidl && git submodule update --init --recursive
-	cd dwarfidl && make -C contrib
+dwarfidl/contrib/config.mk dwarfidl/contrib/env.sh:
+	cd dwarfidl && $(MAKE) -C contrib
 
-dwarfidl/config.status: dwarfidl/contrib/config.mk
+dwarfidl/configure: dwarfidl/configure.ac
 	cd dwarfidl && ./autogen.sh
-	cd dwarfidl && . contrib/env.sh && ./configure --prefix=$(CONTRIB)/usr
+
+dwarfidl/config.status: dwarfidl/configure dwarfidl/contrib/config.mk dwarfidl/contrib/env.sh
+	cd dwarfidl && . contrib/env.sh && ./configure
 
 .PHONY: build-dwarfidl
 build-dwarfidl: dwarfidl/config.status
@@ -30,14 +31,21 @@ varlist += DWARFIDL_CXXFLAGS DWARFIDL_LIBS
 subconfigs += dwarfidl/contrib/config.mk
 
 # ----------------------------config.mk
-
+# If the user nukes a sub-config.mk that our config.mk depends on,
+# we'd like to be able to rebuild it. So we include a generic rule
+# for rebuilding config.mks.
 config.mk: $(subconfigs)
-	(printf "$(foreach cfg,$(subconfigs),\ninclude $(CONTRIB)/$(cfg))"; \
+	(printf '%%/config.mk:\n\t$$(MAKE) -C $$* config.mk\n\n'; \
+	printf "$(foreach cfg,$(subconfigs),\ninclude $(CONTRIB)/$(cfg))"; \
 	printf '$(CONFIG_MK)'; echo) > "$@" || (rm -f "$@"; false)
 # env.sh exports some vars
-$(CONTRIB)/env.sh:
-	(printf "$(foreach cfg,$(subconfigs),\nsource $$(dirname $(CONTRIB)/$(cfg))/env.sh)"; \
+env.sh $(CONTRIB)/env.sh: $(foreach cfg,$(subconfigs),$(dir $(CONTRIB)/$(cfg))env.sh)
+	(printf "$(foreach cfg,$(subconfigs),\n. $$(dirname $(CONTRIB)/$(cfg))/env.sh)"; \
 	printf '$(foreach var,$(varlist),\nexport $(var)="$($(var))")'; echo )>"$@" || (rm -f "$@"; false)
-
+# Similarly when we make an env.sh, have Make ensure existence of
+# its depended-on env.sh too, so that we don't get 'source'-time
+# failures of sub-env.sh.
+$(foreach cfg,$(subconfigs),$(dir $(CONTRIB)/$(cfg))env.sh): %/env.sh:
+	$(MAKE) -C $* env.sh
 clean::
 	rm -f config.mk env.sh
