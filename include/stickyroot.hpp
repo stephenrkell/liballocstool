@@ -131,11 +131,11 @@ struct sticky_root_die : public root_die
 private:
 	static bool is_base_object(int user_fd);
 	static bool has_dwarf(int user_fd);
-	static int open_debuglink(int user_fd);
-	static int open_debug_via_build_id(int user_fd);
+	static int open_debuglink(int user_fd, opt<string> orig_file_abspath = opt<string>());
+	static int open_debug_via_build_id(int user_fd, opt<string> orig_file_abspath = opt<string>());
 
 public:
-	static shared_ptr<sticky_root_die> create(int user_fd);
+	static shared_ptr<sticky_root_die> create(int user_fd, opt<string> orig_file_abspath = opt<string>());
 	sticky_root_die(int dwarf_fd, int base_elf_fd) : root_die(dwarf_fd),
 		dwarf_fd(dwarf_fd), base_elf_fd(base_elf_fd),
 		base_elf_if_different(dwarf_fd == base_elf_fd ? nullptr :

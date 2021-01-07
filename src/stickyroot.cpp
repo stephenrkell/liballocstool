@@ -333,21 +333,31 @@ static string get_liballocs_base()
 	return (*liballocs_base).c_str();
 }
 
-int sticky_root_die::open_debuglink(int user_fd)
+/* The abspath that is relevant to the debuglink need not be the
+ * canonical 'realpath'. */
+int sticky_root_die::open_debuglink(int user_fd, opt<string> orig_file_abspath /* = none */)
 {
 	/* FIXME: linux-specific big hacks here. */
 	char *cmdstr = nullptr;
 	char *fdstr = nullptr;
-	int ret = asprintf(&fdstr, "/dev/fd/%d", user_fd);
-	if (ret <= 0) abort();
-	assert(fdstr);
+	int ret;
 	std::vector<std::string> paths_to_try;
-	char *fd_realpath = realpath(fdstr, nullptr);
-	if (fd_realpath)
+	const char *fd_abspath = nullptr;
+	bool must_free_fd_abspath = false;
+	if (orig_file_abspath) fd_abspath = orig_file_abspath->c_str();
+	else
+	{
+		ret = asprintf(&fdstr, "/dev/fd/%d", user_fd);
+		if (ret <= 0) abort();
+		assert(fdstr);
+		fd_abspath = realpath(fdstr, nullptr);
+		must_free_fd_abspath = true;
+	}
+	if (fd_abspath)
 	{
 		paths_to_try.push_back(
 			string("/usr/lib/debug")
-			+ string(fd_realpath)
+			+ string(fd_abspath)
 		);
 	}
 	/* HACK HACK HACK */
@@ -377,28 +387,28 @@ int sticky_root_die::open_debuglink(int user_fd)
 		 * under each one of the global debug directories,
 		 *      in a subdirectory whose name is identical to
 		 *      the leading directories of the executable's absolute file name. */
-		if (fd_realpath)
+		if (fd_abspath)
 		{
 			// to save us from strdup'ing, construct a string
 			// only do the first one if debuglink it doesn't match basename
 			if (string(debuglink_buf) !=
-				string(basename((char*) string(fd_realpath).c_str())))
+				string(basename((char*) string(fd_abspath).c_str())))
 			{
 				/* Try the debuglink basename on the fd realpath */
 				paths_to_try.push_back(
-					string(dirname((char*) string(fd_realpath).c_str()))
+					string(dirname((char*) string(fd_abspath).c_str()))
 					+ "/" + debuglink_buf
 				);
 			}
 			// try .debug/
 			paths_to_try.push_back(
-				string(dirname((char*) string(fd_realpath).c_str()))
+				string(dirname((char*) string(fd_abspath).c_str()))
 				+ "/.debug/" + debuglink_buf
 			);
 			// HACK: try /usr/lib/debug + fd dirname + debuglink
 			paths_to_try.push_back(
 				string("/usr/lib/debug/")
-				+ string(dirname((char*) string(fd_realpath).c_str()))
+				+ string(dirname((char*) string(fd_abspath).c_str()))
 				+ "/"
 				+ debuglink_buf
 			);
@@ -411,11 +421,11 @@ int sticky_root_die::open_debuglink(int user_fd)
 		if (ret_fd != -1) break;
 	}
 
-	if (fd_realpath) free(fd_realpath);
+	if (fd_abspath && must_free_fd_abspath) free((void*) fd_abspath);
 	free(cmdstr);
 	return ret_fd;
 }
-int sticky_root_die::open_debug_via_build_id(int user_fd)
+int sticky_root_die::open_debug_via_build_id(int user_fd, opt<string> orig_file_abspath)
 {
 	/* FIXME: linux-specific big hacks here. */
 	char *cmdstr = NULL;
@@ -464,10 +474,21 @@ int sticky_root_die::open_debug_via_build_id(int user_fd)
 	return ret_fd;
 }
 
-shared_ptr<sticky_root_die> sticky_root_die::create(int user_fd)
+shared_ptr<sticky_root_die> sticky_root_die::create(int user_fd, opt<string> orig_file_abspath /* = none */)
 {
 	/* This is a helper not a constructor, because we have to
 	 * inspect user_fd before we know what constructor to call. */
+	/* FIXME: this API is unworkable in the case of debuglinks,
+	 * because the a"absolute path" against which they're resolved
+	 * is *NOT* the canonical path (at least, judging from gdb behaviour)
+	 * but rather whatever path the dynamic linker sees the DSO at.
+	 * On Ubuntu 20.04 systems this is /lib/x86_64-linux-gnu/libc-2.31.so
+	 * even though the canonical path is
+	 * /usr/lib/x86_64-linux-gnu/libc-2.31.so
+	 * thanks to a /lib -> /usr/lib symlink.
+	 * So we need to thread through the "ld.so-visible path", not
+	 * just the fd, in order to be able to resolve debuglinks.
+	 * For now, just hope that the build ID method works. */
 	bool is_base = is_base_object(user_fd);
 	/* Easy case: a base object containing DWARF. */
 	if (is_base && has_dwarf(user_fd))
@@ -475,8 +496,8 @@ shared_ptr<sticky_root_die> sticky_root_die::create(int user_fd)
 	int dbg_fd;
 	if (is_base)
 	{
-		dbg_fd = open_debuglink(user_fd);
-		if (dbg_fd == -1) dbg_fd = open_debug_via_build_id(user_fd);
+		dbg_fd = open_debug_via_build_id(user_fd, orig_file_abspath);
+		if (dbg_fd == -1) dbg_fd = open_debuglink(user_fd, orig_file_abspath);
 	}
 	else dbg_fd = user_fd;
 	if (dbg_fd != -1) return std::make_shared<sticky_root_die>(dbg_fd, user_fd);
