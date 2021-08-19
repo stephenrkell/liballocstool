@@ -305,9 +305,11 @@ UNIQTYPE_DECLS
 #define UNIQTYPE_XSTRINGIFY(...) UNIQTYPE_STRINGIFY( __VA_ARGS__ )
 #define UNIQTYPE_DECLSTR UNIQTYPE_XSTRINGIFY(UNIQTYPE_DECLS)
 
-extern struct uniqtype __uniqtype__void __attribute__((weak));
-extern struct uniqtype __uniqtype____EXISTS1___PTR__1 __attribute__((weak)); // pointer to 'a
-extern struct uniqtype __uniqtype____uninterpreted_byte __attribute__((weak)); // byte
+// FIXME: should these be weak? Maybe they need summary codes?
+// E.g. if a struct type happens to be called 'void', it gets screwy.
+extern struct uniqtype __uniqtype__void;
+extern struct uniqtype __uniqtype____EXISTS1___PTR__1; // pointer to 'a
+extern struct uniqtype __uniqtype____uninterpreted_byte; // byte
 
 #ifdef __cplusplus
 #define NULL_UNIQTYPE 0
