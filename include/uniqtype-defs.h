@@ -363,6 +363,38 @@ extern struct uniqtype __uniqtype____uninterpreted_byte __attribute__((weak)); /
                                            (((u)->un.base.bit_off) < 0) ? \
                                                     (8*((u)->pos_maxoff) - (-((u)->un.base.bit_off))) \
                                                        : (u)->un.base.bit_off)))
+/* Higher-order macro alert: 'the_thing' will be called with arguments:
+ * 1. the index of the subobject
+ * 2. the subobject's type
+ * 3. the subobject's byte offset.
+ * FIXME: unions need care. Perhaps we should visit only the active
+ * subobject(s)? */
+#define UNIQTYPE_FOR_EACH_SUBOBJECT(t, the_thing) \
+do { \
+    /* The way we iterate through structs and arrays is different. */ \
+    struct uniqtype_rel_info *related = &t_at_offset->related[0]; \
+    unsigned nmemb; \
+    _Bool is_array; \
+    if (UNIQTYPE_IS_COMPOSITE_TYPE(t_at_offset)) \
+    { \
+        is_array = 0; \
+        nmemb = UNIQTYPE_COMPOSITE_MEMBER_COUNT(t_at_offset); \
+        /* FIXME: toplevel of heap arrays */ \
+    } \
+    else \
+    { \
+        is_array = 1; \
+        nmemb = UNIQTYPE_ARRAY_LENGTH(t_at_offset); \
+        assert(nmemb != UNIQTYPE_ARRAY_LENGTH_UNBOUNDED); \
+    } \
+    for (unsigned i = 0; i < nmemb; ++i, related += (is_array ? 0 : 1)) \
+    { \
+        the_thing(i, \
+                 /* t */ is_array ? UNIQTYPE_ARRAY_ELEMENT_TYPE(t_at_offset) :  related->un.memb.ptr, \
+                 /* offset */ is_array ? (i * UNIQTYPE_ARRAY_ELEMENT_TYPE(t_at_offset)->pos_maxoff) \
+                 : related->un.memb.off ); \
+    } \
+} while (0)
 
 #ifdef __cplusplus
 } /* end extern "C" */
