@@ -86,5 +86,10 @@ if DEBUG
 export DEBUG = 1
 endif
 
+lib/liballocstool.a: $(lib_LTLIBRARIES)
+	mkdir -p lib && cd lib && ln -sf ../src/liballocstool.a .
+
+all: lib/liballocstool.a
+
 clean:
 	$(MAKE) clean-recursive
