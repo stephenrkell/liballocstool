@@ -50,7 +50,6 @@ AC_CHECK_HEADERS([err.h errno.h fstream iomanip iostream map memory], [], [AC_MS
 AC_CHECK_HEADERS([set sstream stdarg.h stdbool.h stddef.h stdint.h stdio.h stdlib.h string string.h strings.h], [], [AC_MSG_FAILURE(Failed to find required header)])
 AC_CHECK_HEADERS([sys/mman.h sys/resource.h sys/types.h unistd.h vector wchar.h], [], [AC_MSG_FAILURE(Failed to find required header)])
 AC_CHECK_HEADERS([libelf.h libelf/libelf.h gelf.h libelf/gelf.h], [], [], [])
-AC_CHECK_HEADERS([dwarf.h], [], [AC_MSG_FAILURE(Failed to find required header)])
 
 AX_BOOST_BASE
 
