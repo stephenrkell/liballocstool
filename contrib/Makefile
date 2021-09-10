@@ -10,7 +10,7 @@ subconfigs :=
 # ----------------------------dwarfidl
 
 dwarfidl/contrib/config.mk dwarfidl/contrib/env.sh:
-	cd dwarfidl && $(MAKE) -C contrib
+	cd dwarfidl && $(MAKE) -C contrib config.mk env.sh
 
 dwarfidl/configure: dwarfidl/configure.ac
 	cd dwarfidl && ./autogen.sh
