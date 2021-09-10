@@ -1,4 +1,7 @@
 ACLOCAL_AMFLAGS = -I m4
+
+SUBDIRS = . lib
+
 # HACK to disable -O2 if DEBUG is set (to anything) -- thanks for nothing, automake
 AM_CXXFLAGS = -O2 $(DEBUG:%=-O0) -std=c++14 -ggdb -fkeep-inline-functions -Wall \
  -Wno-deprecated-declarations -fPIC \

@@ -1,0 +1,3 @@
+[submodule "contrib/dwarfidl"]
+	path = contrib/dwarfidl
+	url = https://github.com/stephenrkell/dwarfidl.git

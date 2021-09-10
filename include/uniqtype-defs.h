@@ -93,7 +93,7 @@ struct uniqtype \
 { \
    struct alloc_addr_info cache_word; \
    unsigned pos_maxoff; /* positive size in bytes, or UINT_MAX for unbounded/unrep'able */ \
-   union { \
+   union { /* keep this 32 bits long */ \
        struct { \
            unsigned kind:4; \
            unsigned unused_:28; \
@@ -116,7 +116,7 @@ struct uniqtype \
        } enumeration; /* related[0] is base type; use related[1..nenum] for enumerators? Or hmm, just use a separate name/value mapping, like member_names? These are like meta_enum, meta_struct, etc.. */ \
        struct { \
            unsigned kind:4; \
-           unsigned nmemb:20; /* 1M members should be enough */ \
+           unsigned nmemb:20; /* 1M struct members should be enough? */ \
            unsigned not_simultaneous:1; /* i.e. whether any member may be invalid */ \
        } composite; /* related[nmemb] is names ptr; could also do "refines" i.e. templatey relations? Or does that seem to be a predicate that belongs outside uniqtypes...? */ \
        struct { \
@@ -305,9 +305,11 @@ UNIQTYPE_DECLS
 #define UNIQTYPE_XSTRINGIFY(...) UNIQTYPE_STRINGIFY( __VA_ARGS__ )
 #define UNIQTYPE_DECLSTR UNIQTYPE_XSTRINGIFY(UNIQTYPE_DECLS)
 
-extern struct uniqtype __uniqtype__void __attribute__((weak));
-extern struct uniqtype __uniqtype____EXISTS1___PTR__1 __attribute__((weak)); // pointer to 'a
-extern struct uniqtype __uniqtype____uninterpreted_byte __attribute__((weak)); // byte
+// FIXME: should these be weak? Maybe they need summary codes?
+// E.g. if a struct type happens to be called 'void', it gets screwy.
+extern struct uniqtype __uniqtype__void;
+extern struct uniqtype __uniqtype____EXISTS1___PTR__1; // pointer to 'a
+extern struct uniqtype __uniqtype____uninterpreted_byte; // byte
 
 #ifdef __cplusplus
 #define NULL_UNIQTYPE 0
@@ -329,10 +331,15 @@ extern struct uniqtype __uniqtype____uninterpreted_byte __attribute__((weak)); /
 #define UNIQTYPE_IS_BASE_TYPE(u)         ((u)->un.info.kind == BASE)
 #define UNIQTYPE_IS_ENUM_TYPE(u)         ((u)->un.info.kind == ENUMERATION)
 #define UNIQTYPE_IS_BASE_OR_ENUM_TYPE(u) (UNIQTYPE_IS_BASE_TYPE(u) || UNIQTYPE_IS_ENUM_TYPE(u))
+#define UNIQTYPE_ENUM_BASE_TYPE(u)       (UNIQTYPE_IS_ENUM_TYPE(u) ? (u)->related[0].un.t.ptr : NULL_UNIQTYPE)
 #define UNIQTYPE_ARRAY_LENGTH(u)         (UNIQTYPE_IS_ARRAY_TYPE(u) ? (u)->un.array.nelems : -1)
 #define UNIQTYPE_ARRAY_ELEMENT_TYPE(u)   (UNIQTYPE_IS_ARRAY_TYPE(u) ? (u)->related[0].un.t.ptr : NULL_UNIQTYPE)
 #define UNIQTYPE_COMPOSITE_MEMBER_COUNT(u) (UNIQTYPE_IS_COMPOSITE_TYPE(u) ? (u)->un.composite.nmemb : 0)
 #define UNIQTYPE_COMPOSITE_SUBOBJ_NAMES(u) (UNIQTYPE_IS_COMPOSITE_TYPE(u) ? (u)->related[(u)->un.composite.nmemb].un.memb_names.n : NULL)
+#define UNIQTYPE_IS_BIT_GRANULARITY_BASE_TYPE(u) \
+   ((u)->un.info.kind == BASE && !((u)->un.base.one_plus_log_bit_size_delta == 0 && \
+                                   (u)->un.base.bit_size_delta_delta == 0 && \
+                                   (u)->un.base.bit_off == 0))
 #define UNIQTYPE_IS_2S_COMPL_INTEGER_TYPE(u) \
    ((u)->un.info.kind == BASE && (u)->un.base.enc == 0x5 /*DW_ATE_signed */)
 #define UNIQTYPE_BASE_TYPE_SIGNEDNESS_COMPLEMENT(u) \
@@ -372,26 +379,26 @@ extern struct uniqtype __uniqtype____uninterpreted_byte __attribute__((weak)); /
 #define UNIQTYPE_FOR_EACH_SUBOBJECT(t, the_thing) \
 do { \
     /* The way we iterate through structs and arrays is different. */ \
-    struct uniqtype_rel_info *related = &t_at_offset->related[0]; \
+    struct uniqtype_rel_info *related = &t->related[0]; \
     unsigned nmemb; \
     _Bool is_array; \
-    if (UNIQTYPE_IS_COMPOSITE_TYPE(t_at_offset)) \
+    if (UNIQTYPE_IS_COMPOSITE_TYPE(t)) \
     { \
         is_array = 0; \
-        nmemb = UNIQTYPE_COMPOSITE_MEMBER_COUNT(t_at_offset); \
+        nmemb = UNIQTYPE_COMPOSITE_MEMBER_COUNT(t); \
         /* FIXME: toplevel of heap arrays */ \
     } \
     else \
     { \
         is_array = 1; \
-        nmemb = UNIQTYPE_ARRAY_LENGTH(t_at_offset); \
+        nmemb = UNIQTYPE_ARRAY_LENGTH(t); \
         assert(nmemb != UNIQTYPE_ARRAY_LENGTH_UNBOUNDED); \
     } \
     for (unsigned i = 0; i < nmemb; ++i, related += (is_array ? 0 : 1)) \
     { \
         the_thing(i, \
-                 /* t */ is_array ? UNIQTYPE_ARRAY_ELEMENT_TYPE(t_at_offset) :  related->un.memb.ptr, \
-                 /* offset */ is_array ? (i * UNIQTYPE_ARRAY_ELEMENT_TYPE(t_at_offset)->pos_maxoff) \
+                 /* t */ is_array ? UNIQTYPE_ARRAY_ELEMENT_TYPE(t) :  related->un.memb.ptr, \
+                 /* offset */ is_array ? (i * UNIQTYPE_ARRAY_ELEMENT_TYPE(t)->pos_maxoff) \
                  : related->un.memb.off ); \
     } \
 } while (0)
