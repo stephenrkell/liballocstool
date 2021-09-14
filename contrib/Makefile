@@ -16,7 +16,7 @@ dwarfidl/configure: dwarfidl/configure.ac
 	cd dwarfidl && ./autogen.sh
 
 dwarfidl/config.status: dwarfidl/configure dwarfidl/contrib/config.mk dwarfidl/contrib/env.sh
-	cd dwarfidl && . contrib/env.sh && ./configure
+	cd dwarfidl && $(MAKE) -C contrib && . contrib/env.sh && ./configure
 
 .PHONY: build-dwarfidl
 build-dwarfidl: dwarfidl/config.status
