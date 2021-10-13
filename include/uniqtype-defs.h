@@ -56,6 +56,9 @@ struct alloc_addr_info \
 /* offset or an absolute address (to encode the mcontext case). HMM.	 */ \
 /* To avoid storing loads of pointers to close-by strings, each needing  */ \
 /* relocation, we point to a names *vector* from a separate related[] entry. */ \
+/* FIXME: 'related' uses uniqtype ptrs, but for aliases, this erases 'which */ \
+/* alias was referred to'... can we instead point to an ELF dynsym?!?! */ \
+/* See liballocs GitHub issue #52. */ \
 struct uniqtype_rel_info \
 { \
    union { \
@@ -146,6 +149,7 @@ struct uniqtype \
    make_precise_fn_t *make_precise; /* NULL means identity function AND that we're concrete */ \
    struct uniqtype_rel_info related[]; \
 }; \
+_Static_assert(_Alignof(struct uniqtype) >= 8, "alignment of struct uniqtype should be 8 or more"); \
 struct mcontext; \
 const char *(__attribute__((pure,weak)) __liballocs_uniqtype_name)(const struct uniqtype *u); \
 const char *(__attribute__((pure,weak)) __liballocs_uniqtype_symbol_name)(const struct uniqtype *u); \
@@ -156,6 +160,9 @@ struct uniqtype *(__attribute__((weak)) __liballocs_make_precise_identity)(struc
    struct uniqtype *out, unsigned long out_len, \
    void *obj, void *memrange_base, unsigned long memrange_sz, void *ip, struct mcontext *ctxt); \
 struct uniqtype *(__attribute__((pure,weak)) __liballocs_get_or_create_array_type)(struct uniqtype *element_t, unsigned array_len);
+
+#define UNIQTYPE_PTR_MASK_FLAGS    (_Alignof(struct uniqtype) - 1ul)
+#define UNIQTYPE_PTR_MASK_NOTFLAGS (~(_Alignof(struct uniqtype) - 1ul))
 
 #define UNIQTYPE_POS_MAXOFF_UNBOUNDED ((1ul << (8*sizeof(unsigned int)))-1) /* UINT_MAX */
 #define UNIQTYPE_ARRAY_LENGTH_UNBOUNDED ((1u<<31)-1)
