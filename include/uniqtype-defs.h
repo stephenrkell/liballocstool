@@ -26,6 +26,14 @@ of or in connection with the use or performance of this software.
 #define UNIQTYPE_DEFS_H_
 
 #ifdef __cplusplus
+#ifndef ALIGNOF
+#define ALIGNOF(t) alignof(t)
+#define _uniqtype_defs_h_defined_ALIGNOF
+#endif
+#ifndef _Static_assert
+#define _Static_assert static_assert
+#define _uniqtype_efs_h_defined__Static_assert
+#endif
 extern "C" {
 #endif
 
@@ -149,7 +157,7 @@ struct uniqtype \
    make_precise_fn_t *make_precise; /* NULL means identity function AND that we're concrete */ \
    struct uniqtype_rel_info related[]; \
 }; \
-_Static_assert(_Alignof(struct uniqtype) >= 8, "alignment of struct uniqtype should be 8 or more"); \
+_Static_assert(ALIGNOF(struct uniqtype) >= 8, "alignment of struct uniqtype should be 8 or more"); \
 struct mcontext; \
 const char *(__attribute__((pure,weak)) __liballocs_uniqtype_name)(const struct uniqtype *u); \
 const char *(__attribute__((pure,weak)) __liballocs_uniqtype_symbol_name)(const struct uniqtype *u); \
@@ -161,8 +169,8 @@ struct uniqtype *(__attribute__((weak)) __liballocs_make_precise_identity)(struc
    void *obj, void *memrange_base, unsigned long memrange_sz, void *ip, struct mcontext *ctxt); \
 struct uniqtype *(__attribute__((pure,weak)) __liballocs_get_or_create_array_type)(struct uniqtype *element_t, unsigned array_len);
 
-#define UNIQTYPE_PTR_MASK_FLAGS    (_Alignof(struct uniqtype) - 1ul)
-#define UNIQTYPE_PTR_MASK_NOTFLAGS (~(_Alignof(struct uniqtype) - 1ul))
+#define UNIQTYPE_PTR_MASK_FLAGS    (ALIGNOF(struct uniqtype) - 1ul)
+#define UNIQTYPE_PTR_MASK_NOTFLAGS (~(ALIGNOF(struct uniqtype) - 1ul))
 
 #define UNIQTYPE_POS_MAXOFF_UNBOUNDED ((1ul << (8*sizeof(unsigned int)))-1) /* UINT_MAX */
 #define UNIQTYPE_ARRAY_LENGTH_UNBOUNDED ((1u<<31)-1)
@@ -412,6 +420,15 @@ do { \
 
 #ifdef __cplusplus
 } /* end extern "C" */
+#ifdef _uniqtype_defs_h_defined_ALIGNOF
+#undef _uniqtype_defs_h_defined_ALIGNOF
+#undef ALIGNOF
 #endif
+#ifdef _uniqtype_efs_h_defined__Static_assert
+#undef _uniqtype_efs_h_defined__Static_assert
+#undef _Static_assert
+#endif
+
+#endif /* cplusplus */
 
 #endif
