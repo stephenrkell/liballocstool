@@ -35,6 +35,11 @@ of or in connection with the use or performance of this software.
 #define _uniqtype_efs_h_defined__Static_assert
 #endif
 extern "C" {
+#else
+#ifndef ALIGNOF
+#define ALIGNOF(t) _Alignof(t)
+#define _uniqtype_defs_h_defined_ALIGNOF
+#endif
 #endif
 
 #include <stddef.h>
@@ -427,6 +432,12 @@ do { \
 #ifdef _uniqtype_efs_h_defined__Static_assert
 #undef _uniqtype_efs_h_defined__Static_assert
 #undef _Static_assert
+#endif /* we defined _Static_assert */
+
+#else /* not cplusplus */
+#ifdef _uniqtype_defs_h_defined_ALIGNOF
+#undef _uniqtype_defs_h_defined_ALIGNOF
+#undef ALIGNOF
 #endif
 
 #endif /* cplusplus */
