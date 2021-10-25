@@ -25,6 +25,7 @@ using dwarf::core::type_die;
 using dwarf::core::base_type_die;
 using dwarf::core::root_die;
 
+/* pair: <code, uniqtype name> */
 typedef pair<string, string> uniqued_name;
 
 // this encodes only the set of types, not the relations between them!
