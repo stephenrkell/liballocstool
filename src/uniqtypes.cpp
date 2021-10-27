@@ -176,7 +176,7 @@ pair<bool, uniqued_name> add_concrete_type_if_absent(iterator_df<type_die> t, ma
 // 		// (to the same as the ikind/fkinds come out from Cil.Pretty)
 // 	}
 
-	uniqued_name n = canonical_key_for_type(t);
+	uniqued_name n = initial_key_for_type(t);
 	
 	smatch m;
 	bool already_present = r.find(n) != r.end();
@@ -303,15 +303,14 @@ void make_exhaustive_master_relation(master_relation_t& rel,
 			&& !i_rel->second.name_here()
 			&& rel.aliases[i_rel->second].size() == 1)
 		{
-			string unique_alias = *rel.aliases[i_rel->second].begin();
 			master_relation_t::value_type v = *i_rel;
+			uniqued_name initial_key = v.first;
+			string unique_alias = *rel.aliases[v.second].begin();
 			i_rel = rel.erase(i_rel);
-			uniqued_name name = v.first;
-			rel.aliases[v.second] = set<string> { name.second };
-			to_re_add.insert(make_pair(
-				make_pair(/* code */ name.first, /* uniqtype name */ unique_alias),
-				v.second
-			));
+			rel.aliases[v.second] = set<string> { initial_key.second };
+			uniqued_name actual_key = make_pair(/* code */ initial_key.first, /* uniqtype name */ unique_alias);
+			rel.non_canonical_keys_by_initial_key[initial_key] = actual_key;
+			to_re_add.insert(make_pair(actual_key, v.second));
 		}
 		else ++i_rel;
 	}
@@ -729,7 +728,7 @@ void write_master_relation(master_relation_t& r,
 			}
 			
 			// compute and print destination name
-			auto k = canonical_key_for_type(i_vert->second.as_a<array_type_die>()->get_type());
+			auto k = r.key_for_type(i_vert->second.as_a<array_type_die>()->get_type());
 			/* FIXME: do multidimensional arrays get handled okay like this? 
 			 * I reckon so, but am not yet sure. */
 			string mangled_name = mangle_typename(k);
@@ -791,10 +790,10 @@ void write_master_relation(master_relation_t& r,
 				/* emit_weak_definition */ pointee_is_codeless
 			);
 			// compute and print destination name
-			auto k1 = canonical_key_for_type(t->get_type());
+			auto k1 = r.key_for_type(t->get_type());
 			string mangled_name1 = mangle_typename(k1);
 			write_uniqtype_related_pointee_type(out, mangled_name1);
-			auto k2 = canonical_key_for_type(ultimate_pointee);
+			auto k2 = r.key_for_type(ultimate_pointee);
 			string mangled_name2 = mangle_typename(k2);
 			write_uniqtype_related_ultimate_pointee_type(out, mangled_name2);
 		}
@@ -813,12 +812,12 @@ void write_master_relation(master_relation_t& r,
 			 * a return type, even if it's &__uniqtype__void. */
 			auto return_type = i_vert->second.as_a<type_describing_subprogram_die>()->find_type();
 			write_uniqtype_related_subprogram_return_type(out,
-				true, mangle_typename(canonical_key_for_type(return_type)));
+				true, mangle_typename(r.key_for_type(return_type)));
 			
 			for (auto i_t = fp_types.begin(); i_t != fp_types.end(); ++i_t)
 			{
 				write_uniqtype_related_subprogram_argument_type(out,
-					mangle_typename(canonical_key_for_type(*i_t))
+					mangle_typename(r.key_for_type(*i_t))
 				);
 				
 				++contained_length;
@@ -989,39 +988,68 @@ void write_master_relation(master_relation_t& r,
 			{
 				++contained_length;
 				auto i_edge = i_i_edge->as_a<member_die>();
-				auto k = canonical_key_for_type(i_edge->find_or_create_type_handling_bitfields());
-				string mangled_name = mangle_typename(k);
-				if (names_emitted.find(mangled_name) == names_emitted.end())
+				/* Instead of re-computing the canonical key,
+				 * wich won't always give us the name we emitted it as
+				 * (thanks to our anonymous-struct / typedef flipping HACK),
+				 * search the relation for the matching concrete. But
+				 * use the canonical-key lookup*/
+				auto related_t = i_edge->find_or_create_type_handling_bitfields();
+				string referenced_symbol_name;
+				string tentative_symbol_name = mangle_typename(r.key_for_type(related_t));
+				if (names_emitted.find(tentative_symbol_name) == names_emitted.end())
 				{
-					cerr << "Type named " << mangled_name << ", " << i_edge->get_type()
-						<< ", concretely " << i_edge->get_type()->get_concrete_type()
-						<< " was not emitted previously." << endl;
-					for (auto i_name = names_emitted.begin(); i_name != names_emitted.end(); ++i_name)
-					{
-						if (i_name->substr(i_name->length() - k.second.length()) == k.second)
-						{
-							cerr << "Possible near-miss: " << *i_name << endl;
+					/* OK, do the slower search. */
+					auto found_really = std::find_if(
+						r.begin(),
+						r.end(),
+						[i_edge](const master_relation_t::value_type& e) -> bool {
+							return e.second == i_edge->get_type()->get_concrete_type();
 						}
-					}
-					/* WHAT should we do here?
-					 * pre-scan and output a forward decl of the uniqtype?
-					 * If the caller asks for it.
-					 * Then we can add its name to the already-emitted list.
-					 * Problem: cycles!
-					 * We've been here before.
-					 * One solution was to calculate the DAG.
-					 * My "easier" solution was to forward-declare everything.
-					 * So presumably I need a pre-pass?
-					 * Maybe we're better off doing it outside this particular
-					 * function?
-					 */
-					//assert(false);
-				}
+					);
+					if (found_really == r.end() ||
+						names_emitted.find(mangle_typename(found_really->first)) == names_emitted.end())
+					{
+						cerr << "BUG: type canonically named " << tentative_symbol_name
+							<< ", " << i_edge->get_type()
+							<< ", concretely " << i_edge->get_type()->get_concrete_type()
+							<< " was not emitted previously (found in relation?"
+							<< ((found_really == r.end()) ? "no" : "yes") << ")." << endl;
+						if (found_really != r.end())
+						{
+							for (auto i_name = names_emitted.begin(); i_name != names_emitted.end(); ++i_name)
+							{
+								string mangled_found = mangle_typename(found_really->first);
+								// can only test for a symbol suffix match if the lengths allow...
+								if (i_name->length() > mangled_found.length())
+								{
+									if (i_name->substr(i_name->length() - mangled_found.length()) == mangled_found)
+									{
+										cerr << "Possible near-miss: " << *i_name << endl;
+									}
+								}
+							}
+						}
+						/* WHAT should we do here?
+						 * pre-scan and output a forward decl of the uniqtype?
+						 * If the caller asks for it.
+						 * Then we can add its name to the already-emitted list.
+						 * Problem: cycles!
+						 * We've been here before.
+						 * One solution was to calculate the DAG.
+						 * My "easier" solution was to forward-declare everything.
+						 * So presumably I need a pre-pass?
+						 * Maybe we're better off doing it outside this particular
+						 * function?
+						 */
+						//assert(false);
+						referenced_symbol_name = tentative_symbol_name;
+					} else referenced_symbol_name = mangle_typename(found_really->first);
+				} else referenced_symbol_name = tentative_symbol_name;
 
 				write_uniqtype_related_contained_member_type(out,
 					i_i_edge == real_members.begin(),
 					*i_off,
-					mangled_name);
+					referenced_symbol_name);
 			}
 
 			write_uniqtype_related_member_names(out,
@@ -1807,22 +1835,30 @@ do { \
 	do_return(make_name_for_anonymous(t), t); \
 } while (0)
 
+/* We now have three implementations of getting the canonical name for a DIE.
+ * - the "old" version formerly used in the function below, now evolved into
+	    the big macro above
+ * - the one in libdwarfpp
+ *     (which got there because canonical names are useful for defining
+ *      the strongly-connected components algorithms, and to make it easy
+ *      to cache SCCs when computed, it made sense to put it directly on the
+ *      DIE types)
+ " - the "new" heavily macroised version below. The idea of the macroised
+ *     version is to support a C implementation of the logic, implemented
+ *     over uniqtypes, and the present C++ one implemented over DIEs.
+ *     We will want the C version if we put any of this into the liballocs
+ *     runtime (for dynamically generated uniqtypes). Currently we just
+ *     use it here, and assert that it gives the same answer as libdwarfpp version.
+ *
+ * Because liballocstool no longer uses strictly 'canonical' names, but rather
+ * allows some deviations (for anonymous structs with a unique typedef alias),
+ * we don't provide this function any more. Some code still calls the libdwarfpp
+ * version. To keep our macro compile-tested, we still compile this code by
+ * putting it in an anonymous namespace.
+ */
+namespace {
 string canonical_name_for_type(iterator_df<type_die> t)
 {
-	/* We now have three implementations of this!
-	 * - the one in libdwarfpp
-	 *     (which got there because canonical names are useful for defining
-	 *      the strongly-connected components algorithms, and to make it easy
-	 *      to cache SCCs when computed, it made sense to put it directly on the
-	 *      DIE types)
-	 * - the "old" version here
-	 " - the "new" heavily macroised version here. The idea of the macroised
-	 *     version is to support a C implementation of the logic, implemented
-	 *     over uniqtypes, and the present C++ one implemented over DIEs.
-	 *     We will want the C version if we put any of this into the liballocs
-	 *     runtime (for dynamically generated uniqtypes). Currently we just
-	 *     use it here, and assert that it gives the same answer as libdwarfpp version..
-	 */
 	auto get_canonical = [](iterator_df<type_die> t) { return !t ? t : t->get_concrete_type(); };
 	auto is_void = [](iterator_df<type_die> t) {
 		return !t || !t->get_concrete_type() ||
@@ -1944,8 +1980,9 @@ string canonical_name_for_type(iterator_df<type_die> t)
 		has_explicit_name, get_explicit_name, make_name_for_anonymous,
 		handle_default_case, trace);
 }
+} /* end anonymous namespace */
 
-string canonical_codestring_for_type(iterator_df<type_die> t)
+string codestring_for_type(iterator_df<type_die> t)
 {
 	if (!t) return "";
 	t = t->get_concrete_type();
@@ -1959,12 +1996,6 @@ string canonical_codestring_for_type(iterator_df<type_die> t)
 		assert(summary_string.size() == 2 * sizeof *code);
 	} else summary_string = "";
 	return summary_string;
-}
-
-uniqued_name
-canonical_key_for_type(iterator_df<type_die> t)
-{
-	return make_pair(canonical_codestring_for_type(t), canonical_name_for_type(t));
 }
 
 // iterator_df<type_die>
@@ -2043,7 +2074,7 @@ void get_types_by_codeless_uniqtype_name(
 			pair<string, string> uniqtype_name_pair;
 			
 			// handle void case specially
-			string canonical_typename = canonical_name_for_type(t);
+			string canonical_typename = dwarf::core::abstract_name_for_type(t);
 			
 			/* CIL/trumptr will only generate references to aliases in the case of 
 			 * base types. We need to handle these here. What should happen? 

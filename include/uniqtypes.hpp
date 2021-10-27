@@ -28,6 +28,10 @@ using dwarf::core::root_die;
 /* pair: <code, uniqtype name> */
 typedef pair<string, string> uniqued_name;
 
+// forward decl
+inline uniqued_name
+initial_key_for_type(iterator_df<type_die> t);
+
 // this encodes only the set of types, not the relations between them!
 struct master_relation_t : public std::map< uniqued_name, iterator_df<type_die> >
 {
@@ -36,6 +40,17 @@ struct master_relation_t : public std::map< uniqued_name, iterator_df<type_die> 
 	master_relation_t(Args&&... args): map(std::forward<Args>(args)...) {}
 
 	map<iterator_df<type_die>, set< string > > aliases;
+	map<uniqued_name, uniqued_name> non_canonical_keys_by_initial_key;
+
+	uniqued_name key_for_type(iterator_df<type_die> t)
+	{
+		auto initial_key = initial_key_for_type(t);
+		auto found = non_canonical_keys_by_initial_key.find(initial_key);
+		if (found != non_canonical_keys_by_initial_key.end())
+		{
+			return found->second;
+		} else return initial_key;
+	}
 };
 
 uniqued_name add_type(iterator_df<type_die> t, master_relation_t& r);
@@ -200,11 +215,13 @@ int dump_usedtypes(const std::vector<std::string>& fnames, std::ostream& out, st
 
 
 string
-canonical_name_for_type(iterator_df<type_die> t);
-string
-canonical_codestring_from_type(iterator_df<type_die> t);
-uniqued_name
-canonical_key_for_type(iterator_df<type_die> t);
+codestring_for_type(iterator_df<type_die> t);
+inline uniqued_name
+initial_key_for_type(iterator_df<type_die> t)
+{
+	return make_pair(codestring_for_type(t),
+		/*(t && t->get_concrete_type())*/ dwarf::core::abstract_name_for_type(t));
+}
 
 string 
 name_for_complement_base_type(iterator_df<base_type_die> base_t);
