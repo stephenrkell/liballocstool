@@ -357,7 +357,7 @@ static string attributes_for_uniqtype(const string& mangled_name, bool is_weak =
 	if (need_termination) s << ")) ";
 	return s.str();
 }
-static void emit_weak_alias_idem(std::ostream& out, const string& alias_name, const string& target_name, bool emit_section = true)
+void emit_weak_alias_idem(std::ostream& out, const string& alias_name, const string& target_name, bool emit_section /* = true */)
 {
 	// workaround for gcc bug 90470: don't emit the same alias twice
 	static set<string> emitted_previously;

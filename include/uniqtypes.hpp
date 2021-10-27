@@ -65,7 +65,8 @@ void add_alias_if_absent(
 void emit_extern_declaration(std::ostream& out,
 	const uniqued_name& name_pair,
 	bool force_weak);
-
+void emit_weak_alias_idem(std::ostream& out,
+	const string& alias_name, const string& target_name, bool emit_section = true );
 void make_exhaustive_master_relation(master_relation_t& r, 
 	iterator_df<> begin, 
 	iterator_df<> end);
