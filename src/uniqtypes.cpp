@@ -142,7 +142,7 @@ void add_alias_if_absent(const string& s, iterator_df<type_die> concrete_t, mast
 		&& concrete_t.name_here()
 		&& s == *name_for_type_die(concrete_t)) return;
 	
-	r.aliases[concrete_t].insert(s);
+	r.aliases[r.key_for_type(concrete_t)].insert(s);
 }
 pair<bool, uniqued_name> add_concrete_type_if_absent(iterator_df<type_die> t, master_relation_t& r)
 {
@@ -301,13 +301,21 @@ void make_exhaustive_master_relation(master_relation_t& rel,
 		 * with a unique alias that does have a source-level name? */
 		if (i_rel->second && i_rel->second.is_a<with_data_members_die>()
 			&& !i_rel->second.name_here()
-			&& rel.aliases[i_rel->second].size() == 1)
+			&& rel.aliases[i_rel->first].size() == 1)
 		{
 			master_relation_t::value_type v = *i_rel;
 			uniqued_name initial_key = v.first;
-			string unique_alias = *rel.aliases[v.second].begin();
+			string unique_alias = *rel.aliases[v.first].begin();
 			i_rel = rel.erase(i_rel);
-			rel.aliases[v.second] = set<string> { initial_key.second };
+			/* Also erase the alias, now that there is a bona-fide
+			 * type of that name.
+			 * PROBLEM: what if there are others aliases with the same
+			 * name and code? Should we erase those too?
+			 * AHA, but wasn't this already a problem? We shouldn't have
+			 * same-name-same-code aliases under two different keys,
+			 * and we weed them out later anyway (below).
+			 */
+			rel.aliases[v.first] = set<string> { initial_key.second };
 			uniqued_name actual_key = make_pair(/* code */ initial_key.first, /* uniqtype name */ unique_alias);
 			rel.non_canonical_keys_by_initial_key[initial_key] = actual_key;
 			to_re_add.insert(make_pair(actual_key, v.second));
@@ -317,6 +325,112 @@ void make_exhaustive_master_relation(master_relation_t& rel,
 	for (auto i_re_add = to_re_add.begin(); i_re_add != to_re_add.end(); ++i_re_add)
 	{
 		rel.insert(*i_re_add);
+	}
+	/* Finally we need to sanity-check aliases. We were seeing cases like this:
+	
+   168  extern struct uniqtype __uniqtype_01082207__build_glibc_S9d2JN_glibc_2_27_iconv____wcsmbs_bits_types___mbstate_t_h_13;
+   169  extern struct uniqtype __uniqtype_01082207___mbstate_t __attribute__((weak));
+   171  extern struct uniqtype __uniqtype_01082207__build_glibc_S9d2JN_glibc_2_27_misc____wcsmbs_bits_types___mbstate_t_h_13;
+   172  extern struct uniqtype __uniqtype_01082207___mbstate_t __attribute__((weak));
+   174  extern struct uniqtype __uniqtype_01082207__build_glibc_S9d2JN_glibc_2_27_posix____wcsmbs_bits_types___mbstate_t_h_13;
+   175  extern struct uniqtype __uniqtype_01082207___mbstate_t __attribute__((weak));
+
+	 * ... where each of the apparently distinct include paths
+	 * (really symlinked) defines a typedef for an anonymous struct
+	 * that of course has an identical definition, so an identical typecode,
+	 * so an identical codeful alias symbol.
+	 * But because each alias symbol points to a *different* anonymous struct,
+	 * our code thinks they are each unique aliases
+	 * to a coincidentally aliased.
+	 *
+	 * We should do something to guard against coincidental same-name-same-typecode cases.
+	 * Otherwise we will emit many aliases under the same symbol,
+	 * but try to point them at different symbols (compile error)
+	 * and likely try to define the aliases in different sections
+	 * (another compiler error).
+	 *
+	 * So we do a pass to weed out same-name, same-typecode aliases.
+	 * with different targets.
+	 */
+	i_rel = rel.begin();
+	map<string, master_relation_t::iterator > alias_symbols_seen; // <alias symbol, target symbol>
+	while (i_rel != rel.end())
+	{
+		string target_symbol = mangle_typename(i_rel->first);
+		auto& aliases = rel.aliases[i_rel->first];
+		if (string("int$64") == i_rel->first.second)
+		{
+			cerr << "int$64's alias set is: {";
+			bool emitted = false;
+			for (auto i_alias = aliases.begin(); i_alias != aliases.end(); ++i_alias)
+			{
+				if (emitted) cerr << ", ";
+				emitted = true;
+				cerr << *i_alias;
+			}
+			cerr << "}" << endl;
+		}
+		auto i_alias = aliases.begin();
+		while (i_alias != aliases.end())
+		{
+			string codeful_alias_symbol = mangle_typename(make_pair(i_rel->first.first,
+				*i_alias));
+			auto pos_and_really_inserted = alias_symbols_seen.insert(
+				make_pair(codeful_alias_symbol, i_rel)
+			);
+			if (!pos_and_really_inserted.second)
+			{
+				/* Was not inserted -> an entry for codeful_alias_symbol
+				 * exists already. */
+				master_relation_t::iterator earlier_seen_pos
+				 = pos_and_really_inserted.first->second;
+				string earlier_alias_target = mangle_typename(earlier_seen_pos->first);
+				cerr << "Dropping suspiciously name-and-code-duplicate alias: "
+					<< codeful_alias_symbol
+					<< " (target here: "
+					<< target_symbol
+					<< "; first seen as alias of: "
+					<< earlier_alias_target
+					<< ")" << endl;
+				/* If the targets are the same, then
+				 * both aliases are at the same i_rel.
+				 * But duplicates are not possible because
+				 * aliases are stored in a set. */
+				if (!(mangle_typename(pos_and_really_inserted.first->second->first) != target_symbol))
+				{
+					// we're going to fail the assertion, but print out
+					// something useful first.
+					cerr << "Strange: found name- and target-identical aliases in master relation at "
+						<< &*earlier_seen_pos
+						<< " (key: <" << earlier_seen_pos->first.first << ", " << earlier_seen_pos->first.second << ">)"
+						<< " and "
+						<< &*i_rel
+						<< " (key <" << i_rel->first.first << ", " << i_rel->first.second << ">)"
+						<< std::endl;
+					// OK. This is happening at the same entry in the master relation.
+					// i.e. we are inserting with the same codeful_alias_symbol,
+					// at the same i_rel in the loop.
+					//
+					// AHA: we have 'long_int' and 'long int' which both mangle
+					// to the same. Where does 'long_int' get added?
+					// AHA! Not by us! It's in mktime.c.
+					/* So what should we do about this? Define an actually injective
+					 * mangling function? How should we escape non-ident chars?
+					 * We could use '$' but it is already used.
+					 * We could use '.' since asm doesn't mind it.
+					 * We could switcheroo the use of '$' somehow,
+					 * e.g. do $NN for hex chars and '.32', '.64' for base types.
+					 * We could try to make the key ('primary' alias, not an alias)
+					 * of a base type its one-word form... but they don't always have
+					 * them (unsigned long, long long, ...)
+					 * although our convention "int, uint"
+					 */
+				}
+				assert(mangle_typename(pos_and_really_inserted.first->second->first) != target_symbol);
+				i_alias = aliases.erase(i_alias);
+			} else ++i_alias;
+		}
+		++i_rel;
 	}
 }
 static void set_symbol_length(std::ostream& out, const string& mangled_name, unsigned length)
@@ -509,7 +623,7 @@ void write_master_relation(master_relation_t& r,
 		 * above is the non-canonical (typedef) one. So we need that 'anonymous'
 		 * alias declared. We just declare all aliases. */
 		emit_extern_declaration(out, i_pair->first, /* force_weak */ false);
-		auto& aliases = r.aliases[i_pair->second];
+		auto& aliases = r.aliases[i_pair->first];
 		for (auto i_alias = aliases.begin(); i_alias != aliases.end(); ++i_alias)
 		{
 			emit_extern_declaration(out, make_pair(i_pair->first.first, *i_alias),
@@ -1166,11 +1280,15 @@ void write_master_relation(master_relation_t& r,
 		/* Output any (typedef-or-base-type) aliases for this type. NOTE that here we are
 		 * assuming that the canonical name for any base type (used above) is not the same as its
 		 * programmatic name (aliased here), e.g. "uint$32" does not equal "unsigned int". */
-		for (auto i_alias = r.aliases[i_vert->second].begin(); 
-			i_alias != r.aliases[i_vert->second].end();
+		for (auto i_alias = r.aliases[i_vert->first].begin(); 
+			i_alias != r.aliases[i_vert->first].end();
 			++i_alias)
 		{
-			emit_weak_alias_idem(out, mangle_typename(make_pair(i_vert->first.first, *i_alias)), mangle_typename(i_vert->first), i_vert->first.first != "");
+			emit_weak_alias_idem(out,
+				mangle_typename(make_pair(i_vert->first.first, *i_alias)),
+				mangle_typename(i_vert->first),
+				/* emit section? */ i_vert->first.first != ""
+			);
 			types_by_name[*i_alias].insert(i_vert->second);
 			name_pairs_by_name[*i_alias].insert(i_vert->first);
 			if (avoid_aliasing_as(*i_alias, i_vert->second))
@@ -1210,7 +1328,10 @@ void write_master_relation(master_relation_t& r,
 					string full_name = mangle_typename(full_name_pair);
 					pair<string, string> abbrev_name_pair = make_pair("", i_set_by_name->first);
 					string abbrev_name = mangle_typename(abbrev_name_pair);
-					emit_weak_alias_idem(out, mangle_typename(abbrev_name_pair), cxxgen::escape(full_name));
+					emit_weak_alias_idem(out,
+						mangle_typename(abbrev_name_pair),
+						cxxgen::escape(full_name)
+					);
 				}
 			}
 			else

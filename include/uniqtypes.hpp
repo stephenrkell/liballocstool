@@ -39,7 +39,8 @@ struct master_relation_t : public std::map< uniqued_name, iterator_df<type_die> 
 	template<typename... Args>
 	master_relation_t(Args&&... args): map(std::forward<Args>(args)...) {}
 
-	map<iterator_df<type_die>, set< string > > aliases;
+	// from *actual* (not initial) key to a set of strings
+	map<uniqued_name, set< string > > aliases;
 	map<uniqued_name, uniqued_name> non_canonical_keys_by_initial_key;
 
 	uniqued_name key_for_type(iterator_df<type_die> t)
