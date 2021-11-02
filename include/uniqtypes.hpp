@@ -242,38 +242,35 @@ inline string mangle_spaces(const string& s)
 	return mangled;
 }
 
-inline string mangle_nonalphanums(const string& s)
-{
-	string mangled = s;
-	
-	static locale_t c_locale = newlocale(LC_CTYPE_MASK, "C", NULL);
-	assert(c_locale);
-	
-	replace_if(mangled.begin(), mangled.end(), [](char c) -> bool {
-			//static const set<char> to_replace
-			// = { '/', '-', '.', ':', '<', '>', ',', '*', '&', '[', ']', '(', ')', '+', '=' };
-			//return to_replace.find(c) != to_replace.end();
-			return c != ' ' && c != '_' && c != '$' && !isalnum_l(c, c_locale);
-		}, '_');
-	return mangled;
-}
-
-inline string mangle_objname(const string& s)
-{
-	return mangle_spaces(mangle_nonalphanums(s));
-}
-
 inline string mangle_string(const string& s)
 {
-	return mangle_spaces(mangle_nonalphanums(s));
+	string mangled = s;
+	static locale_t c_locale = newlocale(LC_CTYPE_MASK, "C", NULL);
+	assert(c_locale);
+	auto i_char = mangled.begin();
+	while (i_char != mangled.end())
+	{
+		char c = *i_char;
+		unsigned pos = i_char - mangled.begin();
+		if (!isalnum_l(c, c_locale) && c != '_' && c != '$' & c != '\0')
+		{
+			std::ostringstream s;
+			s << "$" << std::hex << std::setw(2) << std::setfill('0') << (int) c;
+			mangled.replace(pos, 1, s.str());
+			i_char = mangled.begin() + pos + 3;
+		}
+		else if (c == '$')
+		{
+			mangled.replace(pos, 1, "$$");
+			i_char = mangled.begin() + pos + 2;
+		} else ++i_char;
+	}
+	return mangled;
 }
 
 inline string mangle_typename(const pair<string, string>& p)
 {
-	string first_mangled = mangle_string(p.first);
-	string second_mangled = mangle_string(p.second);
-	
-	return "__uniqtype_" + first_mangled + "_" + second_mangled;
+	return "__uniqtype_" + p.first + "_" + mangle_string(p.second);
 }
 
 opt<uint32_t> type_summary_code(iterator_df<type_die> t);

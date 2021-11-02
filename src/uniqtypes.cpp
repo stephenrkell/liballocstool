@@ -305,7 +305,11 @@ void make_exhaustive_master_relation(master_relation_t& rel,
 		{
 			master_relation_t::value_type v = *i_rel;
 			uniqued_name initial_key = v.first;
-			string unique_alias = *rel.aliases[v.first].begin();
+			string unique_alias = *rel.aliases[initial_key].begin();
+			uniqued_name actual_key = make_pair(/* code */ initial_key.first,
+				/* uniqtype name */ unique_alias);
+			std::cerr << "Swapping '" << initial_key.second
+				<<  "' and '" << unique_alias << "'" << std::endl;
 			i_rel = rel.erase(i_rel);
 			/* Also erase the alias, now that there is a bona-fide
 			 * type of that name.
@@ -315,8 +319,7 @@ void make_exhaustive_master_relation(master_relation_t& rel,
 			 * same-name-same-code aliases under two different keys,
 			 * and we weed them out later anyway (below).
 			 */
-			rel.aliases[v.first] = set<string> { initial_key.second };
-			uniqued_name actual_key = make_pair(/* code */ initial_key.first, /* uniqtype name */ unique_alias);
+			rel.aliases[actual_key].insert(initial_key.second);
 			rel.non_canonical_keys_by_initial_key[initial_key] = actual_key;
 			to_re_add.insert(make_pair(actual_key, v.second));
 		}
@@ -358,18 +361,6 @@ void make_exhaustive_master_relation(master_relation_t& rel,
 	{
 		string target_symbol = mangle_typename(i_rel->first);
 		auto& aliases = rel.aliases[i_rel->first];
-		if (string("int$64") == i_rel->first.second)
-		{
-			cerr << "int$64's alias set is: {";
-			bool emitted = false;
-			for (auto i_alias = aliases.begin(); i_alias != aliases.end(); ++i_alias)
-			{
-				if (emitted) cerr << ", ";
-				emitted = true;
-				cerr << *i_alias;
-			}
-			cerr << "}" << endl;
-		}
 		auto i_alias = aliases.begin();
 		while (i_alias != aliases.end())
 		{
@@ -860,7 +851,7 @@ void write_master_relation(master_relation_t& r,
 				(opt_fixed_size ? *opt_fixed_size : 0)
 			);
 			/* FIXME */
-			write_uniqtype_related_array_element_type(out, string("__uniqtype__unsigned_char$8"));
+			write_uniqtype_related_array_element_type(out, string("__uniqtype__unsigned_char$$8"));
 		}
 		else if (i_vert->second.is_a<address_holding_type_die>())
 		{
@@ -1330,7 +1321,7 @@ void write_master_relation(master_relation_t& r,
 					string abbrev_name = mangle_typename(abbrev_name_pair);
 					emit_weak_alias_idem(out,
 						mangle_typename(abbrev_name_pair),
-						cxxgen::escape(full_name)
+						cxxgen::escape(full_name) /* FIXME: mangling looks suspect here */
 					);
 				}
 			}
@@ -1884,6 +1875,7 @@ name_for_complement_base_type(iterator_df<base_type_die> base_t)
 	pair<Dwarf_Unsigned, Dwarf_Unsigned> bit_size_and_offset = base_t->bit_size_and_offset();
 	bool needs_suffix = !((bit_size_and_offset.second == 0) 
 		&& (bit_size_and_offset.first == 8 * size));
+	/* Single-'$' is appropriate because we will mangle this separately. */
 	name << ((base_t->get_encoding() == DW_ATE_signed) ? "uint" : "int")
 		<< "$" << bit_size_and_offset.first;
 	if (needs_suffix) name << "$" << bit_size_and_offset.second;
