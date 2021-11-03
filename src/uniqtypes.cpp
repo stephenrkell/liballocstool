@@ -7,10 +7,12 @@
 #include <string>
 #include <cctype>
 #include <cstdlib>
+#include <cstring>
 #include <cstddef>
 #include <memory>
 #include <cmath>
 #include <boost/regex.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/icl/interval_map.hpp>
 #include <srk31/algorithm.hpp>
@@ -387,7 +389,8 @@ void make_exhaustive_master_relation(master_relation_t& rel,
 				 * both aliases are at the same i_rel.
 				 * But duplicates are not possible because
 				 * aliases are stored in a set. */
-				if (!(mangle_typename(pos_and_really_inserted.first->second->first) != target_symbol))
+				if (mangle_typename(pos_and_really_inserted.first->second->first)
+				   == target_symbol)
 				{
 					// we're going to fail the assertion, but print out
 					// something useful first.
@@ -398,26 +401,12 @@ void make_exhaustive_master_relation(master_relation_t& rel,
 						<< &*i_rel
 						<< " (key <" << i_rel->first.first << ", " << i_rel->first.second << ">)"
 						<< std::endl;
-					// OK. This is happening at the same entry in the master relation.
-					// i.e. we are inserting with the same codeful_alias_symbol,
-					// at the same i_rel in the loop.
-					//
-					// AHA: we have 'long_int' and 'long int' which both mangle
-					// to the same. Where does 'long_int' get added?
-					// AHA! Not by us! It's in mktime.c.
-					/* So what should we do about this? Define an actually injective
-					 * mangling function? How should we escape non-ident chars?
-					 * We could use '$' but it is already used.
-					 * We could use '.' since asm doesn't mind it.
-					 * We could switcheroo the use of '$' somehow,
-					 * e.g. do $NN for hex chars and '.32', '.64' for base types.
-					 * We could try to make the key ('primary' alias, not an alias)
-					 * of a base type its one-word form... but they don't always have
-					 * them (unsigned long, long long, ...)
-					 * although our convention "int, uint"
-					 */
+					// We used to get this when we had a typedef 'long_int' as well as
+					// base type 'long int', and in our old mangling they both mangled
+					// to the same. It shouldn't happen any more
 				}
-				assert(mangle_typename(pos_and_really_inserted.first->second->first) != target_symbol);
+				assert(mangle_typename(pos_and_really_inserted.first->second->first)
+				 != target_symbol);
 				i_alias = aliases.erase(i_alias);
 			} else ++i_alias;
 		}
@@ -2067,9 +2056,9 @@ string canonical_name_for_type(iterator_df<type_die> t)
 		{
 			ostringstream s;
 			opt<string> maybe_fqp = t.enclosing_cu()->source_file_fq_pathname(*t->get_decl_file());
-			s << (maybe_fqp ? 
-				*maybe_fqp : 
-				t.enclosing_cu()->source_file_name(*t->get_decl_file())) 
+			s << (maybe_fqp ?
+				boost::filesystem::path(*maybe_fqp).filename() : 
+				boost::filesystem::path(t.enclosing_cu()->source_file_name(*t->get_decl_file())).filename())
 				<< "_" << *t->get_decl_line();
 			name_to_use = s.str();
 		}
