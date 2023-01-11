@@ -667,11 +667,13 @@ sticky_root_die::get_statics()
 		}
 	};
 	auto symtab_etc = get_symtab();
-	auto dynsym_etc = get_dynsym();
 	process_a_symtab(symtab_etc.first.first, symtab_etc.first.second, symtab_etc.second.second,
 		static_descr::SYMTAB);
-	process_a_symtab(dynsym_etc.first.first, dynsym_etc.first.second, dynsym_etc.second.second,
-		static_descr::DYNSYM);
+	try {
+		auto dynsym_etc = get_dynsym();
+		process_a_symtab(dynsym_etc.first.first, dynsym_etc.first.second, dynsym_etc.second.second,
+			static_descr::DYNSYM);
+	} catch (No_entry) {}
 	for (auto i = this->begin(); i != this->end(); ++i)
 	{
 		cerr << i.summary() << std::endl;

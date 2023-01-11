@@ -1699,7 +1699,15 @@ int dump_usedtypes(const vector<string>& fnames, std::ostream& out, std::ostream
 			return 1;
 		}
 
-		rs[i] = std::move(unique_ptr<root_die>(new root_die(fileno(infstream))));
+		try
+		{
+			rs[i] = std::move(unique_ptr<root_die>(new root_die(fileno(infstream))));
+		}
+		catch (lib::No_entry)
+		{
+			rs[i] = nullptr;
+			continue;
+		}
 		root_die &r = *rs[i];
 		get_types_by_codeless_uniqtype_name(types_by_codeless_uniqtype_name, 
 			r.begin(), r.end());
