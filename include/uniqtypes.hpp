@@ -252,7 +252,7 @@ inline string mangle_string(const string& s)
 	{
 		char c = *i_char;
 		unsigned pos = i_char - mangled.begin();
-		if (!isalnum_l(c, c_locale) && c != '_' && c != '$' & c != '\0')
+		if (!isalnum_l(c, c_locale) && c != '_' && c != '$' && c != '\0')
 		{
 			std::ostringstream s;
 			s << "$" << std::hex << std::setw(2) << std::setfill('0') << (int) c;
