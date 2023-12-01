@@ -1,4 +1,3 @@
-
 #include <string>
 #include <sstream>
 #include <fstream>
@@ -307,7 +306,11 @@ static string get_liballocs_base()
 	/* HACK HACK HACK: assume we're run in place, and use auxv to get our $0's dirname.
 	 * PROBLEM: if we're libtool'd, our program is built in .libs.
 	 * FIXME: what's the right way to do this? Envvars are normal, but we don't
-	 * really like that either. Reimplementing the logic in C/C++ would also work. */
+	 * really like that either.
+	 *
+	 * We only use this function to locate our debug-funcs.sh, to do read_debuglink
+	 * and read_build_id. Reimplementing that logic in C/C++ would also work.
+	 * Presumably libbfd or libelf or libdw can do these? */
 	static opt<string> liballocs_base;
 	if (!liballocs_base)
 	{

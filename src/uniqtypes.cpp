@@ -101,8 +101,10 @@ pair<bool, uniqued_name> add_type_if_absent(iterator_df<type_die> t, master_rela
 		// add the concrete
 		auto concrete_t = t->get_concrete_type();
 		auto ret = add_concrete_type_if_absent(concrete_t, r);
-		// add the alias, if we have a name
-		if (t.name_here())
+		// add the alias, if we have a name *and* it is different from the concrete's name
+		// THIS DOESN'T WORK ---------------^ because somehow names get substituted later
+		if (t.name_here() && (!concrete_t.name_here() ||
+			 *name_for_type_die(t) != *name_for_type_die(concrete_t)))
 		{
 			add_alias_if_absent(*name_for_type_die(t), concrete_t, r);
 		}
@@ -456,14 +458,13 @@ void emit_weak_alias_idem(std::ostream& out, const string& alias_name, const str
 	// workaround for gcc bug 90470: don't emit the same alias twice
 	static set<string> emitted_previously;
 	if (emitted_previously.find(alias_name) != emitted_previously.end()) return;
+	/* It's a bug if the target name is the same as the alias. */
+	assert(alias_name != target_name);
 	emitted_previously.insert(alias_name);
 	out << "extern struct uniqtype " << alias_name
 		<< " __attribute__((weak,alias(\"" << target_name << "\")";
 	if (emit_section)
 	{
-		/* To satisfy gcc's "section of alias `...' must match section of its target",
-		 * we rather we even have to match the escape-hatch cruft (although it gets
-		 * discarded after gcc has done the check). */
 		out << ",section(\".data." << target_name
 			/* To satisfy gcc's "section of alias `...' must match section of its target",
 			 * we rather we even have to match the escape-hatch cruft (although it gets
@@ -590,6 +591,8 @@ void write_master_relation(master_relation_t& r,
 					integer_base_types_by_size_and_signedness[bit_size][signedness].insert(*i_pair);
 				}
 			}
+			/* The 'avoid_aliasing_as' thing handles bitfield types that should not be
+			 * aliased codelessly. */
 			if (avoid_aliasing_as(name.second, t))
 			{
 				codeless_alias_blacklist[name.second].insert(name.first);
@@ -1259,7 +1262,70 @@ void write_master_relation(master_relation_t& r,
 		
 		/* Output any (typedef-or-base-type) aliases for this type. NOTE that here we are
 		 * assuming that the canonical name for any base type (used above) is not the same as its
-		 * programmatic name (aliased here), e.g. "uint$32" does not equal "unsigned int". */
+		 * programmatic name (aliased here), e.g. "uint$32" does not equal "unsigned int".
+		 *
+		 * FIXME: this is emitting alias cycles currently. I think this is down to
+		 * changes that added find_associated_name in libdwarfpp. What has changed?
+		 * Do we use a libdwarfpp call to get canonical names? YES,
+		 * 			string canonical_typename = dwarf::core::abstract_name_for_type(t);
+		 * in get_types_by_codeless_uniqtype_name.
+		 *
+		 * Did this change to use the new 'associated names'?
+		 * Not that I can see.
+		 *
+		 *  in add_type_if_absent(iterator_df<type_die> t, master_relation_t& r)
+		 *     we add aliases when concrete_t != t, covering typedefs
+		 *  ... calling name_for_type_die to get the alias name
+		 *  and calling add_alias_if_absent to do the deed.
+		 *
+		 * THEN in
+		 * void make_exhaustive_master_relation(master_relation_t& rel, 
+		    dwarf::core::iterator_df<> begin, 
+		    dwarf::core::iterator_df<> end)
+		 *  we do the swapping thing:
+
+			// Are with a with-data-members DIE (i.e. "normally" we'd have a name),
+			// with no source-level name,
+			// with a unique alias that does have a source-level name?
+			if (i_rel->second && i_rel->second.is_a<with_data_members_die>()
+				&& !i_rel->second.name_here()
+				&& rel.aliases[i_rel->first].size() == 1)
+			{
+				master_relation_t::value_type v = *i_rel;
+				uniqued_name initial_key = v.first;
+				string unique_alias = *rel.aliases[initial_key].begin();
+				uniqued_name actual_key = make_pair(initial_key.first, // code
+					unique_alias); // uniqtype name
+				std::cerr << "Swapping '" << initial_key.second
+					<<  "' and '" << unique_alias << "'" << std::endl;
+				i_rel = rel.erase(i_rel);
+
+		 * So what has changed that's causing our alias thing?
+		 * Is it that the typedef is still getting an alias, but also
+		 * the anonymous struct that it refers to now has exactly the same name?
+		 * It presumably isn't *just* that because the tests used to pass
+		 * with the swapping thing in action.
+		 *
+		 * name_for_type_die just does name_here()
+		 * Where does find_associated_name() get used? It gets used from arbitrary_name
+		 * but we don't seem to use that.
+		 * It also gets used in may_equal, abstractly_equals and the summary code
+		 * and in with_data_members_die::print_abstract_name
+		 * and dwarf::core::abstract_name_for_type
+		 * AHA
+		 * and initial_key_for_type(iterator_df<type_die> t) uses abstract_name
+		 * AND abstract_name is now the associated ("swapped") name for such anonymous structs.
+		 *
+		 * So the "!i_rel->second.name_here()" is not the right test
+		 * because in reality the name that will be used (via abstract_name())
+		 * is not an anonymous autogenerated name
+		 * but the actual typedef'd name, setting up the exact same symbol name.
+		 
+		 * We might want to skip the swapping, but that's not enough because
+		 * swapping the same alias with itself will still leave a duplicate!
+		 * Instead we need to avoid creating the alias, by using the initial key function
+		 * to generate the name that we test for duplicates.
+		 */
 		for (auto i_alias = r.aliases[i_vert->first].begin(); 
 			i_alias != r.aliases[i_vert->first].end();
 			++i_alias)
@@ -1271,6 +1337,7 @@ void write_master_relation(master_relation_t& r,
 			);
 			types_by_name[*i_alias].insert(i_vert->second);
 			name_pairs_by_name[*i_alias].insert(i_vert->first);
+			/* This is mostly to avoid codeless aliases for bitfield types. */
 			if (avoid_aliasing_as(*i_alias, i_vert->second))
 			{
 				codeless_alias_blacklist[*i_alias].insert(i_vert->first.first);
@@ -2182,8 +2249,6 @@ void get_types_by_codeless_uniqtype_name(
 			assert(t.is_real_die_position());
 			auto concrete_t = t->get_concrete_type();
 			pair<string, string> uniqtype_name_pair;
-			
-			// handle void case specially
 			string canonical_typename = dwarf::core::abstract_name_for_type(t);
 			
 			/* CIL/trumptr will only generate references to aliases in the case of 
