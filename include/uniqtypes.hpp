@@ -298,7 +298,7 @@ iterator_df<type_die> get_or_create_uninterpreted_byte_type(root_die& r);
 		:   (assert(false), iterator_base::END) )
 
 inline opt<string>
-name_for_type_die(iterator_df<type_die> t)
+type_die_get_name(iterator_df<type_die> t)
 {
 	/* Normally we just return the name. However: HACK HACK HACK. 
 	 * If it's a CIL name like __anon(struct|union)_BLAH_nn, we erase the nn. 

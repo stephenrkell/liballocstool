@@ -101,12 +101,13 @@ pair<bool, uniqued_name> add_type_if_absent(iterator_df<type_die> t, master_rela
 		// add the concrete
 		auto concrete_t = t->get_concrete_type();
 		auto ret = add_concrete_type_if_absent(concrete_t, r);
+		auto maybe_t_name = t.name_here();
+		auto maybe_concrete_t_name = concrete_t.name_here();
 		// add the alias, if we have a name *and* it is different from the concrete's name
 		// THIS DOESN'T WORK ---------------^ because somehow names get substituted later
-		if (t.name_here() && (!concrete_t.name_here() ||
-			 *name_for_type_die(t) != *name_for_type_die(concrete_t)))
+		if (maybe_t_name && (!maybe_concrete_t_name || *maybe_t_name != *maybe_concrete_t_name))
 		{
-			add_alias_if_absent(*name_for_type_die(t), concrete_t, r);
+			add_alias_if_absent(*type_die_get_name(t), concrete_t, r);
 		}
 		return ret;
 	}
@@ -120,11 +121,11 @@ pair<bool, uniqued_name> add_type_if_absent(iterator_df<type_die> t, master_rela
 		if (t.name_here() && *t.name_here() != "__uninterpreted_byte"
 			&& !t.as_a<base_type_die>()->is_bitfield_type())
 		{
-			add_alias_if_absent(*name_for_type_die(t), concrete_t, r);
+			add_alias_if_absent(*type_die_get_name(t), concrete_t, r);
 			/* HACK: for good measure, also ensure that we add the 
 			 * canonical C name, if the name we have is in some equivalence class. */
 			const char **c_equiv_class = abstract_c_compiler::get_equivalence_class_ptr(
-				name_for_type_die(t)->c_str());
+				type_die_get_name(t)->c_str());
 			if (c_equiv_class)
 			{
 				add_alias_if_absent(c_equiv_class[0], concrete_t, r);
@@ -144,7 +145,7 @@ void add_alias_if_absent(const string& s, iterator_df<type_die> concrete_t, mast
 	 * we *do* need their actual-name aliases. */
 	if (!concrete_t.is_a<base_type_die>()
 		&& concrete_t.name_here()
-		&& s == *name_for_type_die(concrete_t)) return;
+		&& s == *type_die_get_name(concrete_t)) return;
 	
 	r.aliases[r.key_for_type(concrete_t)].insert(s);
 }
@@ -1222,7 +1223,7 @@ void write_master_relation(master_relation_t& r,
 			if (i_vert->second.name_here())
 			{
 				const char **equiv = abstract_c_compiler::get_equivalence_class_ptr(
-					name_for_type_die(i_vert->second)->c_str());
+					type_die_get_name(i_vert->second)->c_str());
 				if (equiv)
 				{
 					// we're outputting a type with a C-style name, i.e. matching one of
@@ -1275,7 +1276,7 @@ void write_master_relation(master_relation_t& r,
 		 *
 		 *  in add_type_if_absent(iterator_df<type_die> t, master_relation_t& r)
 		 *     we add aliases when concrete_t != t, covering typedefs
-		 *  ... calling name_for_type_die to get the alias name
+		 *  ... calling type_die_get_name to get the alias name
 		 *  and calling add_alias_if_absent to do the deed.
 		 *
 		 * THEN in
@@ -1306,7 +1307,7 @@ void write_master_relation(master_relation_t& r,
 		 * It presumably isn't *just* that because the tests used to pass
 		 * with the swapping thing in action.
 		 *
-		 * name_for_type_die just does name_here()
+		 * type_die_get_name just does name_here()
 		 * Where does find_associated_name() get used? It gets used from arbitrary_name
 		 * but we don't seem to use that.
 		 * It also gets used in may_equal, abstractly_equals and the summary code
@@ -2114,10 +2115,10 @@ string canonical_name_for_type(iterator_df<type_die> t)
 	{ return t.as_a<address_holding_type_die>()->find_type(); };
 	auto has_explicit_name = [](iterator_df<type_die> t) -> bool { return t.name_here(); };
 	auto get_explicit_name = [](iterator_df<type_die> t) -> std::string {
-		// const char *ret = (t.name_here()) ? (*name_for_type_die(t)).c_str() : NULL;
+		// const char *ret = (t.name_here()) ? (*type_die_get_name(t)).c_str() : NULL;
 		// return ret;
 		// for strange reasons, the above doesn't work. I think it's a lifetime thing.
-		return string(*name_for_type_die(t));
+		return string(*type_die_get_name(t));
 	};
 	auto make_name_for_anonymous = [](iterator_df<type_die> t) {
 		string name_to_use;
@@ -2276,7 +2277,7 @@ void get_types_by_codeless_uniqtype_name(
 				assert(concrete_t.is_a<base_type_die>());
 				// if the base type has no name, this DWARF type is useless to us
 				if (!concrete_t.name_here()) continue;
-				canonical_typename = *name_for_type_die(concrete_t);
+				canonical_typename = *type_die_get_name(concrete_t);
 			}
 			string codeless_symname = mangle_typename(make_pair("", canonical_typename));
 
@@ -2290,11 +2291,11 @@ void get_types_by_codeless_uniqtype_name(
 			{
 				m.insert(
 					make_pair(
-						mangle_typename(make_pair("", *name_for_type_die(concrete_t))), 
+						mangle_typename(make_pair("", *type_die_get_name(concrete_t))), 
 						concrete_t
 					)
 				);
-				const char **equiv = abstract_c_compiler::get_equivalence_class_ptr(name_for_type_die(concrete_t)->c_str());
+				const char **equiv = abstract_c_compiler::get_equivalence_class_ptr(type_die_get_name(concrete_t)->c_str());
 				if (equiv)
 				{
 					m.insert(
