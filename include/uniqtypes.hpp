@@ -25,46 +25,58 @@ using dwarf::core::type_die;
 using dwarf::core::base_type_die;
 using dwarf::core::root_die;
 
+string
+codestring_for_type(iterator_df<type_die> t);
+
 /* pair: <code, uniqtype name> */
-typedef pair<string, string> uniqued_name;
+struct codeful_name : pair<string, string>
+{
+	using pair::pair;
+	codeful_name(iterator_df<type_die> t)
+		: pair(codestring_for_type(t), dwarf::core::abstract_name_for_type(t))
+	{}
+};
 
 // forward decl
-inline uniqued_name
-initial_key_for_type(iterator_df<type_die> t);
+inline codeful_name
+codeful_name_for_type(iterator_df<type_die> t);
 
 // this encodes only the set of types, not the relations between them!
-struct master_relation_t : public std::map< uniqued_name, iterator_df<type_die> >
+struct master_relation_t : public std::map< codeful_name, iterator_df<type_die> >
 {
 	//using map::map;
 	template<typename... Args>
 	master_relation_t(Args&&... args): map(std::forward<Args>(args)...) {}
 
-	// from *actual* (not initial) key to a set of strings
-	map<uniqued_name, set< string > > aliases;
-	map<uniqued_name, uniqued_name> non_canonical_keys_by_initial_key;
+	map<codeful_name, set< string > > aliases;
 
-	uniqued_name key_for_type(iterator_df<type_die> t)
+#if 0
+	codeful_name key_for_type(iterator_df<type_die> t)
 	{
 		auto initial_key = initial_key_for_type(t);
+		return initial_key;
+#if 0
 		auto found = non_canonical_keys_by_initial_key.find(initial_key);
 		if (found != non_canonical_keys_by_initial_key.end())
 		{
 			return found->second;
 		} else return initial_key;
+#endif
 	}
+#endif
 };
 
-uniqued_name add_type(iterator_df<type_die> t, master_relation_t& r);
-pair<bool, uniqued_name> add_type_if_absent(iterator_df<type_die> t, master_relation_t& r);
-pair<bool, uniqued_name> add_concrete_type_if_absent(iterator_df<type_die> t, master_relation_t& r);
-pair<bool, uniqued_name> transitively_add_type(iterator_df<type_die> t, master_relation_t& r);
+codeful_name add_type(iterator_df<type_die> t, master_relation_t& r);
+pair<bool, codeful_name> add_type_if_absent(iterator_df<type_die> t, master_relation_t& r);
+pair<bool, codeful_name> add_concrete_type_if_absent(iterator_df<type_die> t, master_relation_t& r);
+pair<bool, codeful_name> transitively_add_type(iterator_df<type_die> t, master_relation_t& r);
 void add_alias_if_absent(
 	const std::string& s, 
 	iterator_df<type_die> concrete_t, 
 	master_relation_t& r
 );
 void emit_extern_declaration(std::ostream& out,
-	const uniqued_name& name_pair,
+	const codeful_name& name_pair,
 	bool force_weak);
 void emit_weak_alias_idem(std::ostream& out,
 	const string& alias_name, const string& target_name, bool emit_section = true );
@@ -214,16 +226,6 @@ void write_uniqtype_close(std::ostream& o,
 	boost::optional<unsigned> n_contained = boost::optional<unsigned>());
 
 int dump_usedtypes(const std::vector<std::string>& fnames, std::ostream& out, std::ostream& cerr);
-
-
-string
-codestring_for_type(iterator_df<type_die> t);
-inline uniqued_name
-initial_key_for_type(iterator_df<type_die> t)
-{
-	return make_pair(codestring_for_type(t),
-		/*(t && t->get_concrete_type())*/ dwarf::core::abstract_name_for_type(t));
-}
 
 string 
 name_for_complement_base_type(iterator_df<base_type_die> base_t);

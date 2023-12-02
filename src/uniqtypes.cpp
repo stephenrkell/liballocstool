@@ -93,21 +93,23 @@ static void write_uniqtype_open_generic(std::ostream& o,
 
 /* This function just deals with non-concretes, or base types needing aliases;
  * it delegates other cases to add_concrete_type_if_absent. */
-pair<bool, uniqued_name> add_type_if_absent(iterator_df<type_die> t, master_relation_t& r)
+pair<bool, codeful_name> add_type_if_absent(iterator_df<type_die> t, master_relation_t& r)
 {
 	auto concrete_t = t ? t->get_concrete_type() : iterator_df<type_die>();
 	if (t && t != concrete_t)
 	{
-		// add the concrete
+		// add the concrete, but alias it as the non-concrete
 		auto concrete_t = t->get_concrete_type();
 		auto ret = add_concrete_type_if_absent(concrete_t, r);
-		auto maybe_t_name = t.name_here();
-		auto maybe_concrete_t_name = concrete_t.name_here();
-		// add the alias, if we have a name *and* it is different from the concrete's name
-		// THIS DOESN'T WORK ---------------^ because somehow names get substituted later
-		if (maybe_t_name && (!maybe_concrete_t_name || *maybe_t_name != *maybe_concrete_t_name))
+		// add the alias, if we have a name *and* it is different from
+		// whatever the concrete's name will be if we generate it
+		opt<string> maybe_t_name = t.name_here() ? codeful_name(t).second : opt<string>();
+		string concrete_t_name = codeful_name(concrete_t).second;
+		if (maybe_t_name && *maybe_t_name != concrete_t_name)
 		{
-			add_alias_if_absent(*type_die_get_name(t), concrete_t, r);
+			// add the non-concrete alias
+			add_alias_if_absent(/* the alias */ *type_die_get_name(t),
+				/* the thing aliased */ concrete_t, r);
 		}
 		return ret;
 	}
@@ -147,9 +149,9 @@ void add_alias_if_absent(const string& s, iterator_df<type_die> concrete_t, mast
 		&& concrete_t.name_here()
 		&& s == *type_die_get_name(concrete_t)) return;
 	
-	r.aliases[r.key_for_type(concrete_t)].insert(s);
+	r.aliases[codeful_name(concrete_t)].insert(s);
 }
-pair<bool, uniqued_name> add_concrete_type_if_absent(iterator_df<type_die> t, master_relation_t& r)
+pair<bool, codeful_name> add_concrete_type_if_absent(iterator_df<type_die> t, master_relation_t& r)
 {
 	// we might get called on to add void
 	if (t == iterator_base::END)
@@ -181,7 +183,7 @@ pair<bool, uniqued_name> add_concrete_type_if_absent(iterator_df<type_die> t, ma
 // 		// (to the same as the ikind/fkinds come out from Cil.Pretty)
 // 	}
 
-	uniqued_name n = initial_key_for_type(t);
+	codeful_name n(t);
 	
 	smatch m;
 	bool already_present = r.find(n) != r.end();
@@ -195,9 +197,9 @@ pair<bool, uniqued_name> add_concrete_type_if_absent(iterator_df<type_die> t, ma
 	return make_pair(!already_present, n);
 }
 
-pair<bool, uniqued_name> transitively_add_type(iterator_df<type_die> toplevel_t, master_relation_t& r)
+pair<bool, codeful_name> transitively_add_type(iterator_df<type_die> toplevel_t, master_relation_t& r)
 {
-	pair<bool, uniqued_name> result;
+	pair<bool, codeful_name> result;
 	
 	walk_type(toplevel_t, iterator_base::END, 
 		[&r, &result, toplevel_t](iterator_df<type_die> t, iterator_df<program_element_die> reason) -> bool {
@@ -297,10 +299,11 @@ void make_exhaustive_master_relation(master_relation_t& rel,
 	 * an alias. We do this as a rewrite after the relation is done;
 	 * otherwise we have no way to be sure that the alias is unique.
 	 */
-	map< uniqued_name, iterator_df<type_die> > to_re_add;
+	map< codeful_name, iterator_df<type_die> > to_re_add;
 	master_relation_t::iterator i_rel = rel.begin();
 	while (i_rel != rel.end())
 	{
+#if 0
 		/* Are with a with-data-members DIE (i.e. "normally" we'd have a name),
 		 * with no source-level name,
 		 * with a unique alias that does have a source-level name? */
@@ -309,9 +312,9 @@ void make_exhaustive_master_relation(master_relation_t& rel,
 			&& rel.aliases[i_rel->first].size() == 1)
 		{
 			master_relation_t::value_type v = *i_rel;
-			uniqued_name initial_key = v.first;
+			codeful_name initial_key = v.first;
 			string unique_alias = *rel.aliases[initial_key].begin();
-			uniqued_name actual_key = make_pair(/* code */ initial_key.first,
+			codeful_name actual_key = make_pair(/* code */ initial_key.first,
 				/* uniqtype name */ unique_alias);
 			std::cerr << "Swapping '" << initial_key.second
 				<<  "' and '" << unique_alias << "'" << std::endl;
@@ -325,10 +328,11 @@ void make_exhaustive_master_relation(master_relation_t& rel,
 			 * and we weed them out later anyway (below).
 			 */
 			rel.aliases[actual_key].insert(initial_key.second);
-			rel.non_canonical_keys_by_initial_key[initial_key] = actual_key;
 			to_re_add.insert(make_pair(actual_key, v.second));
 		}
-		else ++i_rel;
+		else
+#endif
+		++i_rel;
 	}
 	for (auto i_re_add = to_re_add.begin(); i_re_add != to_re_add.end(); ++i_re_add)
 	{
@@ -482,7 +486,7 @@ void emit_weak_alias_idem(std::ostream& out, const string& alias_name, const str
 	set_symbol_length(out, alias_name, 1);
 }
 void emit_extern_declaration(std::ostream& out,
-	const uniqued_name& name_pair,
+	const codeful_name& name_pair,
 	bool force_weak)
 {
 	out << "extern struct uniqtype " << mangle_typename(name_pair);
@@ -610,7 +614,7 @@ void write_master_relation(master_relation_t& r,
 		auto& aliases = r.aliases[i_pair->first];
 		for (auto i_alias = aliases.begin(); i_alias != aliases.end(); ++i_alias)
 		{
-			emit_extern_declaration(out, make_pair(i_pair->first.first, *i_alias),
+			emit_extern_declaration(out, codeful_name(i_pair->first.first, *i_alias),
 				/* force_weak */ true);
 		}
 	}
@@ -826,7 +830,7 @@ void write_master_relation(master_relation_t& r,
 			}
 			
 			// compute and print destination name
-			auto k = r.key_for_type(i_vert->second.as_a<array_type_die>()->get_type());
+			auto k = codeful_name(i_vert->second.as_a<array_type_die>()->get_type());
 			/* FIXME: do multidimensional arrays get handled okay like this? 
 			 * I reckon so, but am not yet sure. */
 			string mangled_name = mangle_typename(k);
@@ -888,10 +892,10 @@ void write_master_relation(master_relation_t& r,
 				/* emit_weak_definition */ pointee_is_codeless
 			);
 			// compute and print destination name
-			auto k1 = r.key_for_type(t->get_type());
+			auto k1 = codeful_name(t->get_type());
 			string mangled_name1 = mangle_typename(k1);
 			write_uniqtype_related_pointee_type(out, mangled_name1);
-			auto k2 = r.key_for_type(ultimate_pointee);
+			auto k2 = codeful_name(ultimate_pointee);
 			string mangled_name2 = mangle_typename(k2);
 			write_uniqtype_related_ultimate_pointee_type(out, mangled_name2);
 		}
@@ -910,12 +914,12 @@ void write_master_relation(master_relation_t& r,
 			 * a return type, even if it's &__uniqtype__void. */
 			auto return_type = i_vert->second.as_a<type_describing_subprogram_die>()->find_type();
 			write_uniqtype_related_subprogram_return_type(out,
-				true, mangle_typename(r.key_for_type(return_type)));
+				true, mangle_typename(codeful_name(return_type)));
 			
 			for (auto i_t = fp_types.begin(); i_t != fp_types.end(); ++i_t)
 			{
 				write_uniqtype_related_subprogram_argument_type(out,
-					mangle_typename(r.key_for_type(*i_t))
+					mangle_typename(codeful_name(*i_t))
 				);
 				
 				++contained_length;
@@ -1093,7 +1097,7 @@ void write_master_relation(master_relation_t& r,
 				 * use the canonical-key lookup*/
 				auto related_t = i_edge->find_or_create_type_handling_bitfields();
 				string referenced_symbol_name;
-				string tentative_symbol_name = mangle_typename(r.key_for_type(related_t));
+				string tentative_symbol_name = mangle_typename(codeful_name(related_t));
 				if (names_emitted.find(tentative_symbol_name) == names_emitted.end())
 				{
 					/* OK, do the slower search. */
@@ -1293,9 +1297,9 @@ void write_master_relation(master_relation_t& r,
 				&& rel.aliases[i_rel->first].size() == 1)
 			{
 				master_relation_t::value_type v = *i_rel;
-				uniqued_name initial_key = v.first;
+				codeful_name initial_key = v.first;
 				string unique_alias = *rel.aliases[initial_key].begin();
-				uniqued_name actual_key = make_pair(initial_key.first, // code
+				codeful_name actual_key = make_pair(initial_key.first, // code
 					unique_alias); // uniqtype name
 				std::cerr << "Swapping '" << initial_key.second
 					<<  "' and '" << unique_alias << "'" << std::endl;
@@ -1909,7 +1913,7 @@ int dump_usedtypes(const vector<string>& fnames, std::ostream& out, std::ostream
 		string unmangled_name = i_pair->first;
 		unmangled_name.replace(0, string("__uniqtype_........_").size(), "");
 		string insert = i_pair->first.substr(string("__uniqtype_").size(), 8);
-		tmp_master_relation.insert(make_pair(make_pair(insert, unmangled_name), found.first->second));
+		tmp_master_relation.insert(make_pair(codeful_name(insert, unmangled_name), found.first->second));
 		
 		set<string> tmp_names_emitted;
 		map<string, set< iterator_df<type_die> > > tmp_types_by_name;

@@ -344,9 +344,9 @@ ensure_needed_types_and_assign_to_allocsites(root_die& r, vector<allocsite>& as)
 			// update the allocsite record with the type we just created
 			i_a->found_type = created.as_a<type_die>();
 			// rewrite clean typename to the codeless symname, i.e. what dumpallocs would generate
-			i_a->clean_typename = mangle_typename(make_pair("", initial_key_for_type(created).second));
+			i_a->clean_typename = mangle_typename(make_pair("", codeful_name(created).second));
 			auto add_type = [&types_we_created, &types_by_codeless_name](iterator_df<type_die> t) {
-				auto name_pair = initial_key_for_type(t);
+				auto name_pair = codeful_name(t);
 				types_we_created.push_back(t);
 				auto codeless_name = mangle_typename(make_pair("", name_pair.second));
 				types_by_codeless_name.insert(make_pair(
@@ -363,7 +363,7 @@ ensure_needed_types_and_assign_to_allocsites(root_die& r, vector<allocsite>& as)
 			if (DECLARE_AS_ARRAY0(*i_a))
 			{
 				auto codeless_arr0_name = mangle_typename(make_pair("",
-					string("__ARR_") + initial_key_for_type(found_named_type).second));
+					string("__ARR_") + codeful_name(found_named_type).second));
 				auto found_arr0 = types_by_codeless_name.find(codeless_arr0_name);
 				if (found_arr0 != types_by_codeless_name.end())
 				{
@@ -373,7 +373,7 @@ ensure_needed_types_and_assign_to_allocsites(root_die& r, vector<allocsite>& as)
 				{
 					auto created = create_arr0_type_for_element_type(r, found_named_type);
 					i_a->found_type = created.as_a<type_die>();
-					assert(0 == strncmp(initial_key_for_type(i_a->found_type).second.c_str(),
+					assert(0 == strncmp(codeful_name(i_a->found_type).second.c_str(),
 						"__ARR_", 6));
 					types_we_created.push_back(i_a->found_type);
 				}
