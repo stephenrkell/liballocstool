@@ -31,7 +31,8 @@ liballocstool_include_HEADERS = include/uniqtype-defs.h include/uniqtype.h inclu
 
 lib_LIBRARIES = src/liballocstool.a
 
-src_liballocstool_a_SOURCES = src/stickyroot.cpp src/uniqtypes.cpp src/allocsites-info.cpp
+src_liballocstool_a_SOURCES = src/stickyroot.cpp src/uniqtypes.cpp src/allocsites-info.cpp \
+  src/frame-element.cpp
 
 LIBELF ?= -lelf
 export LIBELF

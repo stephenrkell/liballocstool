@@ -96,7 +96,7 @@ static void write_uniqtype_open_generic(std::ostream& o,
 pair<bool, codeful_name> add_type_if_absent(iterator_df<type_die> t, master_relation_t& r)
 {
 	auto concrete_t = t ? t->get_concrete_type() : iterator_df<type_die>();
-	if (t && t != concrete_t)
+	if (t && t != concrete_t) // this handles typedef_die, mostly...
 	{
 		// add the concrete, but alias it as the non-concrete
 		auto concrete_t = t->get_concrete_type();
