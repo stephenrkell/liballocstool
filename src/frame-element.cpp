@@ -67,7 +67,7 @@ bool operator<(const frame_element& x,
 	return (x.m_local < y.m_local)
 		|| ((x.m_local == y.m_local) && x.m_caller_regnum < y.m_caller_regnum)
 		|| ((x.m_local == y.m_local) && (x.m_caller_regnum == y.m_caller_regnum) &&
-			x.effective_expr < y.effective_expr)
+			x.effective_expr_piece.copy() < y.effective_expr_piece.copy())
 	//	|| ((x.first == y.first) && x.second.first.offset_here() == y.second.first.offset_here()
 	//		&& x.second.first.second.second < y.second.first.second.second );
 	;
@@ -84,7 +84,7 @@ bool frame_element::location_depends_on_register() const
 	if (!has_location()) return false;
 	auto& spec = m_local ? m_local.spec_here() : spec::DEFAULT_DWARF_SPEC;
 	bool saw_register = false;
-	for (auto i_instr = effective_expr.begin(); i_instr != effective_expr.end();
+	for (auto i_instr = effective_expr_piece.first; i_instr != effective_expr_piece.second;
 		++i_instr)
 	{
 		if (spec.op_reads_register(i_instr->lr_atom)
@@ -99,26 +99,32 @@ optional<Dwarf_Signed> frame_element::has_fixed_offset_from_frame_base() const
 	typedef optional<Dwarf_Signed> ret_t;
 	// if we have a varying location, we don't have a fixed offset
 	if (this->location_depends_on_register()) return ret_t();
-	if (this->has_varying_location()) return ret_t();
+	// v-- can't do this -- would be circular.
+	//if (this->has_varying_location()) return ret_t();
+	/* FIXME: so what happens if our location is not register-based, but is
+	 * varying. E.g. imagine a location specified by a loc expr that does an
+	 * indirection -- say a handle-style indirection where the handle
+	 * lives at a global variable and it's the referent of the handle that is
+	 * defined as the location. How would that pop out? Currently we'd get
+	 * ADDRESS coming out and it would look fine. Really we need to scan the
+	 * loc expr for anything that consumes input not on the stack... e.g. reading
+	 * the pointer, in the handle-style case. FIXME: generalise/add to
+	 * location_depends_on_register as appropriate... loc_expr_reads_machine_context? */
 	if (this->has_fixed_register()) return ret_t();
 	if (this->has_value_function()) return ret_t();
 	if (this->has_implicit_value()) return ret_t();
 	/* OK, see if we get an address out. */
 	try
 	{
-		std::stack<Dwarf_Unsigned> initial_stack; 
-		// call the evaluator directly
-		// -- push zero (a.k.a. the frame base) onto the initial stack
-		initial_stack.push(0); 
-		// FIXME: really want to push the offset of the stack pointer from the frame base
-		// so that what comes out is a sp-relative offset?
-		dwarf::expr::evaluator e(effective_expr,
+		dwarf::expr::evaluator e(effective_expr_piece.copy(),
 			m_local.spec_here(),
 			/* fb */ 0L,
-			initial_stack);
+			{ 0 } /* push zero (a.k.a. the frame base) onto the initial stack */);
+		// FIXME: really want to push the offset of the stack pointer from the frame base
+		// so that what comes out is a sp-relative offset?
 		switch (e.tos_state())
 		{
-			case dwarf::expr::evaluator::REGISTER:
+			case dwarf::expr::evaluator::NAMED_REGISTER:
 				/* OK, the value lives in a register... we should have caught this! */
 				assert(false);
 				break;
@@ -261,8 +267,13 @@ frame_element::local_elements_for(iterator_df<with_dynamic_location_die> d,
 #ifdef DEBUG
 	cerr << "Saw loclist " << var_loclist << endl;
 #endif
+	/* FIXME: what if root.get_frame_section() does not
+	 * return the right frame section? Really we need
+	 * sticky_root_die to do the thing we do in frametypes2
+	 * of searching for the contentful frame section.
+	 * find_nonempty_frame_section(). */
 	var_loclist = encap::rewrite_loclist_in_terms_of_cfa(
-		var_loclist, 
+		var_loclist,
 		root.get_frame_section(),
 		dwarf::spec::opt<const encap::loclist&>() /* opt_fbreg */
 	);
@@ -311,17 +322,13 @@ frame_element::local_elements_for(iterator_df<with_dynamic_location_die> d,
 			assert(our_interval.upper() - our_interval.lower() < 1024*1024);
 
 			// add each piece
-			auto pieces = i_locexpr->byte_pieces(); // FIXME: support bit-pieces
+			shared_ptr<loc_expr> p_expr = make_shared<loc_expr>(*i_locexpr);
+			auto pieces = p_expr->all_pieces();
+			
 			unsigned cur_bit_offset = 0;
-			for (auto i_piece = pieces.begin(); i_piece != pieces.end();
-				cur_bit_offset += 8 * i_piece->second, ++i_piece)
+			for (auto i_piece = pieces.begin(); i_piece != pieces.end(); ++i_piece)
 			{
-				// each piece is a pair: std::pair<dwarf::encap::loc_expr, Dwarf_Unsigned>
-				// where the unsigned is the "length of the 
-				out.insert(make_pair(our_interval, frame_element(
-					d, i_piece->first, 8 * i_piece->second, cur_bit_offset
-					)
-				));
+				out.insert(make_pair(our_interval, frame_element(d, *i_piece, p_expr)));
 			}
 		}
 	} // end for each locexpr
@@ -539,9 +546,15 @@ frame_element::cfi_elements_for(core::Fde fde,
 				case FrameSection::register_def::REGISTER: {
 					// caller's register "col" is saved in callee register "regnum"
 					int regnum = found_col->second.register_plus_offset_r().first;
-					frame_element v(col,
-						{ (expr_instr) { .lr_atom = DW_OP_reg0 + regnum } });
-
+					shared_ptr<loc_expr> p_expr = make_shared<loc_expr>(loc_expr(
+						{ (expr_instr) { .lr_atom = DW_OP_reg0 + regnum } }));
+					out.insert(make_pair(
+						boost::icl::discrete_interval<Dwarf_Addr>::right_open(
+							fde_lopc,
+							fde_hipc
+						),
+						frame_element(regnum, p_expr->all_pieces().at(0), p_expr)
+					));
 #if 0
 					SANITY_CHECK_PRE(out);
 					out += make_pair(
@@ -590,15 +603,18 @@ frame_element::cfi_elements_for(core::Fde fde,
 						v
 					);
 #else
+					shared_ptr<loc_expr> p_expr = make_shared<loc_expr>(loc_expr(
+					 /* expr */ { (expr_instr) { .lr_atom = DW_OP_call_frame_cfa },
+						  (expr_instr) { .lr_atom = DW_OP_consts, .lr_number = saved_offset },
+						  (expr_instr) { .lr_atom = DW_OP_plus } }
+					));
 					out.insert(make_pair(
 						boost::icl::discrete_interval<Dwarf_Addr>::right_open(
 							fde_lopc,
 							fde_hipc
 						),
 						frame_element(
-							/* caller reg */ col, /* expr */ { (expr_instr) { .lr_atom = DW_OP_call_frame_cfa },
-						  (expr_instr) { .lr_atom = DW_OP_consts, .lr_number = saved_offset },
-						  (expr_instr) { .lr_atom = DW_OP_plus } }
+							/* caller reg */ col, p_expr->all_pieces().at(0), p_expr
 						)
 					));
 #endif

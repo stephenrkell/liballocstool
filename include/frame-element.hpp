@@ -48,7 +48,31 @@ using dwarf::core::array_type_die;
 using dwarf::core::type_chain_die;
 using dwarf::encap::loc_expr;
 
-/* -------- FIXME: put these elsewhere? in allocstool makes sense.... */
+/* Since interval_map splits but doesn't consolidate, we may have a
+ * collection of contiguous intervals with the same elements.
+ * We want to process them all in one go. This is a bit like doing
+ * equal_range() on a multimap. It can be used in a for loop,
+ * at the rather nasty cost of updating the iterator in the loop body.
+ * Note that the equal range is right-closed: [start, i_last_equal]. */
+template <typename V>
+typename boost::icl::interval_map<Dwarf_Addr, V>::iterator
+find_equal_range_last(typename boost::icl::interval_map<Dwarf_Addr, V>::iterator start,
+                      typename boost::icl::interval_map<Dwarf_Addr, V>::iterator end)
+{
+	if (start == end) return end;
+	auto i_last_equal = start;
+	Dwarf_Addr real_end = start->first.upper();
+	while (++i_last_equal != end
+		&& /* equality */   (i_last_equal->second == start->second ||
+		 (/*cerr << "next not equal: " << std::hex << i_last_equal->first << std::dec << endl,*/ false))
+		&& /* contiguity */ (i_last_equal->first.lower() == real_end ||
+		 (/*cerr << "not contiguous with " << std::hex << real_end << ": " << i_last_equal->first << endl,*/ false))
+	)
+	{ real_end = i_last_equal->first.upper(); }
+	--i_last_equal; // we incremented it once too far
+	return i_last_equal; // note that the equal range is right-closed: [start, i_last_equal]
+}
+
 struct subprogram_key : public pair< pair<string, string>, string > // ordering for free
 {
 	subprogram_key(const string& subprogram_name, const string& sourcefile_name, 
@@ -120,15 +144,17 @@ struct frame_element
 	//   location is really "static" or "dynamic" depends 
 
 	// in all cases we have...
-	loc_expr effective_expr; // has been de-piece'd, selected from loc list, etc.
+	//loc_expr effective_expr; // has been de-piece'd, selected from loc list, etc.
 		// and rewritten-in-terms-of-CFA'd of course
+	shared_ptr<loc_expr> p_effective_expr;
+	loc_expr::piece effective_expr_piece;
 
 	optional<Dwarf_Signed> has_fixed_offset_from_frame_base() const;
-	optional<Dwarf_Signed> has_fixed_register() const
-	{ return effective_expr.size() == 1 && ( (effective_expr.back().lr_atom >= DW_OP_reg0
-		&& effective_expr.back().lr_atom <= DW_OP_reg31) || effective_expr.back().lr_atom == DW_OP_regx ); }
+	/*optional<Dwarf_Signed>*/ bool has_fixed_register() const
+	{ return effective_expr_piece.op_count() == 1 && ( (effective_expr_piece.back().lr_atom >= DW_OP_reg0
+		&& effective_expr_piece.back().lr_atom <= DW_OP_reg31) || effective_expr_piece.back().lr_atom == DW_OP_regx ); }
 	/*optional<loc_expr>*/ bool has_value_function() const // strip DW_OP_stack_value at end? NO
-	{ return effective_expr.size() >= 1 && effective_expr.back().lr_atom == DW_OP_stack_value; }
+	{ return effective_expr_piece.op_count() >= 1 && effective_expr_piece.back().lr_atom == DW_OP_stack_value; }
 	                       // has_location implies has_value_function? just put deref at the end?
 
 	/* DW_OP_implicit_pointer means "our value is a pointer into some other
@@ -143,19 +169,19 @@ struct frame_element
 	//optional< pair<iterator_df<with_dynamic_location_die>, Dwarf_Unsigned > >
 	bool
 	has_implicit_pointer_value() const
-	{ return effective_expr.size() >= 1 && (
+	{ return effective_expr_piece.op_count() >= 1 && (
 #ifdef DW_OP_implicit_pointer
-	effective_expr.back().lr_atom == DW_OP_implicit_pointer ||
+	effective_expr_piece.back().lr_atom == DW_OP_implicit_pointer ||
 #endif
-	effective_expr.back().lr_atom == DW_OP_GNU_implicit_pointer
+	effective_expr_piece.back().lr_atom == DW_OP_GNU_implicit_pointer
 	   ); }
 
 	//optional< vector<unsigned char> >
 	bool
 	has_implicit_literal_value() const
-	{ return effective_expr.size() >= 1 && (
+	{ return effective_expr_piece.op_count() >= 1 && (
 #ifdef DW_OP_implicit_value
-	effective_expr.back().lr_atom == DW_OP_implicit_value
+	effective_expr_piece.back().lr_atom == DW_OP_implicit_value
 	/* FIXME: how does libdwarf parse these? What about libdw? From my dwarf.h I see
     DW_OP_implicit_value = 0x9e, // DW_FORM_block follows opcode.
 	   ... so it might not be safe to assume the last expr_instr is the DW_OP_implicit_value */
@@ -180,31 +206,23 @@ struct frame_element
 
 	bool                   location_depends_on_register() const;
 	bool                   is_static_masquerading_as_local() const
-	{ return m_local && has_location() && location_depends_on_register(); }
+	{ return m_local && has_location() && /* HACK: look for DW_OP_addr at the start of an expr */
+		effective_expr_piece.op_count() > 0 && effective_expr_piece.first->lr_atom == DW_OP_addr; }
 
 	optional<Dwarf_Signed> is_saved_register() const
 	{ return m_caller_regnum != 0 ? m_caller_regnum : optional<Dwarf_Signed>(); }
 	iterator_df<with_dynamic_location_die> is_local() const { return m_local; }
 
-	Dwarf_Unsigned piece_bit_size_or_zero;
-	Dwarf_Unsigned piece_bit_offset_or_zero;
-	optional<pair<Dwarf_Unsigned, Dwarf_Unsigned> > is_piece() const
-	{ return (0 != piece_bit_size_or_zero)
-		? make_pair(piece_bit_size_or_zero, piece_bit_offset_or_zero)
-		: optional<pair<Dwarf_Unsigned, Dwarf_Unsigned> >(); }
-
 	/* When constructing, we always need to have a PC range:
 	 * set effective expression => we need to know the element's PC range (or just lopc) */
 
 private:
-	frame_element(Dwarf_Unsigned reg, const loc_expr& expr)
-	 : m_local(iterator_base::END), m_caller_regnum(reg), effective_expr(expr),
-	   piece_bit_size_or_zero(0), piece_bit_offset_or_zero(0) {}
-	frame_element(iterator_df<with_dynamic_location_die> d, const loc_expr& expr,
-	   Dwarf_Unsigned piece_bit_size_or_zero = 0, Dwarf_Unsigned piece_bit_offset_or_zero = 0)
-	 : m_local(std::move(d)), m_caller_regnum(0), effective_expr(expr),
-	   piece_bit_size_or_zero(piece_bit_size_or_zero),
-	   piece_bit_offset_or_zero(piece_bit_offset_or_zero)
+	frame_element(Dwarf_Unsigned reg, loc_expr::piece const& piece, shared_ptr<loc_expr> whole_expr)
+	 : m_local(iterator_base::END), m_caller_regnum(reg), effective_expr_piece(piece),
+	   p_effective_expr(whole_expr) { assert(reg != 0); }
+	frame_element(iterator_df<with_dynamic_location_die> d, loc_expr::piece const& piece, shared_ptr<loc_expr> whole_expr)
+	 : m_local(std::move(d)), m_caller_regnum(0), effective_expr_piece(piece),
+	   p_effective_expr(whole_expr)
 	  { assert(m_local); }
 public:
 	static
