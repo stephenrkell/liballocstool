@@ -18,6 +18,8 @@
 
 #include <boost/icl/interval_map.hpp>
 
+#include <dwarfpp/frame.hpp>
+
 extern "C" {
 #include <sys/mman.h>
 #include <link.h>
@@ -38,7 +40,6 @@ using std::cerr;
 using std::endl;
 using std::ostringstream;
 using std::string;
-using std::deque;
 using namespace dwarf::core;
 using dwarf::tool::abstract_c_compiler;
 
@@ -505,6 +506,61 @@ shared_ptr<sticky_root_die> sticky_root_die::create(int user_fd, opt<string> ori
 	else dbg_fd = user_fd;
 	if (dbg_fd != -1) return std::make_shared<sticky_root_die>(dbg_fd, user_fd);
 	return std::shared_ptr<sticky_root_die>();
+}
+
+sticky_root_die::sticky_root_die(int dwarf_fd, int base_elf_fd)
+ : root_die(dwarf_fd),
+	dwarf_fd(dwarf_fd), base_elf_fd(base_elf_fd),
+	base_elf_if_different(dwarf_fd == base_elf_fd ? nullptr :
+		elf_begin(base_elf_fd, ELF_C_READ, nullptr))
+{
+	/* The root_die constructor always uses .eh_frame to get the
+	 * frame section. This might not be where the frame info lives,
+	 * however, in the case where most of the DWARF has been stripped
+	 * into a separate debuginfo file and the .eh_frame has been left
+	 * in the original binary. */
+	if (!p_fs || p_fs->fde_element_count == 0)
+	{
+		/* Let's try to ensure we get a frame section with content.
+		 *
+		 * PROBLEM: every frame section has a Debug reference, and
+		 * its destructor will call dwarf_fde_cie_list_dealloc.
+		 * So really we are stretching the 'root_die' concept here...
+		 * the frame sectoin's Debug will no longer equal our own
+		 * Debug. Does that matter? Possibly not. Really we should have
+		 * a wrapper interface that creates root_dies for every
+		 * involved ELF file, rather than pretending to be a single
+		 * root_die like we currently do.
+		 *
+		 * PROBLEM: for other files we will  need to use a different
+		 * Dwarf_Debug than our own, and it needs to stay alive as
+		 * long as the FrameSection itself does. One way to do this
+		 * would be to have a unique_ptr to a base_elf_root_die_if_different.
+		 * OK, let's do that.
+		 */
+		if (base_elf_if_different)
+		{
+			/* Try the base ELF instead. */
+			base_elf_root_die_if_different = std::make_unique<root_die>(base_elf_fd);
+		}
+	}
+}
+
+core::FrameSection *sticky_root_die::find_nonempty_frame_section()
+{
+	if (p_fs && p_fs->fde_element_count > 0) return p_fs;
+	if (base_elf_root_die_if_different &&
+		base_elf_root_die_if_different->get_frame_section().fde_element_count > 0)
+	{
+		/* bit nasty: turn reference back into pointer */
+		return &base_elf_root_die_if_different->get_frame_section();
+	}
+	// last try: .debug_frame in the current object
+	// HACK: drop the .eh_frame if we ave it -- it's empty
+	if (p_fs) delete p_fs;
+	p_fs = new FrameSection(this->get_dbg(), /* use_eh */ false);
+	if (p_fs->fde_element_count > 0) return p_fs;
+	return nullptr;
 }
 
 boost::icl::discrete_interval<Dwarf_Addr>

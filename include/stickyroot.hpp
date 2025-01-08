@@ -10,7 +10,6 @@
 #include <cxxgen/cxx_compiler.hpp>
 #include <cstdint>
 #include <iomanip>
-#include <deque>
 #include <map>
 #include <locale.h>
 #include <elf.h>
@@ -78,6 +77,9 @@ std::ostream& operator<<(std::ostream& s, const enum sym_or_reloc_kind& k);
 #define ELFW_R_SYM(i) \
 	ELFW_R_SYM_x(i, __ELF_NATIVE_CLASS)
 
+
+namespace dwarf { namespace core { struct FrameSection; } }
+
 namespace allocs
 {
 namespace tool
@@ -88,7 +90,6 @@ using std::endl;
 using std::cerr;
 using std::map;
 using std::set;
-using std::deque;
 using std::pair;
 using std::make_pair;
 using std::multimap;
@@ -129,6 +130,7 @@ struct sticky_root_die : public root_die
 	const int base_elf_fd;
 	Elf *base_elf_if_different;
 private:
+	std::unique_ptr<root_die> base_elf_root_die_if_different;
 	static bool is_base_object(int user_fd);
 	static bool has_dwarf(int user_fd);
 	static int open_debuglink(int user_fd, opt<string> orig_file_abspath = opt<string>());
@@ -136,10 +138,7 @@ private:
 
 public:
 	static shared_ptr<sticky_root_die> create(int user_fd, opt<string> orig_file_abspath = opt<string>());
-	sticky_root_die(int dwarf_fd, int base_elf_fd) : root_die(dwarf_fd),
-		dwarf_fd(dwarf_fd), base_elf_fd(base_elf_fd),
-		base_elf_if_different(dwarf_fd == base_elf_fd ? nullptr :
-			elf_begin(base_elf_fd, ELF_C_READ, nullptr)) {}
+	sticky_root_die(int dwarf_fd, int base_elf_fd);
 
 	virtual bool is_sticky(const core::abstract_die& d) 
 	{
@@ -148,7 +147,7 @@ public:
 			;
 	}
 
-	// FIXME: support non-host-native size
+	// FIXME: support non-host-native size (i.e. don't use ElfW)
 private:
 	opt<ElfW(Sym) *> opt_symtab;
 	char *strtab;
@@ -158,10 +157,13 @@ private:
 	char *dynstr;
 	unsigned dynsym_n;
 	Elf *dynsym_e;
+	/* ^------------------all these come from
+	 * whichever file contains them, between the base and the dwarf file. */
 public:
 	/* FIXME: can we have multiple .symtabs? For the moment we assume no,
 	 * i.e. we look first in the base obj, then in the separate DWARF obj. */
 	pair<pair<ElfW(Sym) *, char*>, pair<Elf *, unsigned> > get_symtab();
+	core::FrameSection *find_nonempty_frame_section();
 	bool symtab_is_external()
 	{ auto symtab = get_symtab();
 	  return symtab_e != dynsym_e && symtab.second.first == symtab_e; }
