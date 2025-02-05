@@ -89,7 +89,6 @@ typedef boost::icl::interval_map<
 	/* It's a set only so that we can detect and warn about overlaps... */
 	std::set< pair< subprogram_key, iterator_df<subprogram_die> > >
 > subprogram_vaddr_interval_map_t;
-/* -------- end FIXME */
 
 /* What's a frame element?
  * It's a piece of a frame. We have boiled away some of the DWARF features --
@@ -128,15 +127,18 @@ typedef boost::icl::interval_map<
 struct frame_element
 {
 	iterator_df<with_dynamic_location_die> m_local;
-	Dwarf_Unsigned m_caller_regnum;
+	optional<Dwarf_Signed> m_caller_regnum;
 	static inline Dwarf_Unsigned size_for_regnum(Dwarf_Unsigned regnum)
 	{ /* FIXME: not accurate for all regs */ return sizeof (void*); }
-	optional<Dwarf_Unsigned> size_in_bytes() const
+	/* This gets the size not of the frame element, but of the logical
+	 * program element e.g. the *whole* local var. This element might
+	 * only be a piece of that. */
+	optional<Dwarf_Unsigned> program_element_size_in_bytes() const
 	{ return m_local ?
 		(m_local->find_type()->calculate_byte_size()
 			? optional<Dwarf_Unsigned>(*m_local->find_type()->calculate_byte_size())
 			 : optional<Dwarf_Unsigned>())
-		: optional<Dwarf_Unsigned>(size_for_regnum(m_caller_regnum)); }
+		: optional<Dwarf_Unsigned>(size_for_regnum(*m_caller_regnum)); }
 	// need another case: computed. and maybe another: implicit pointer.
 	// and maybe also implicit_value but let's gamble we can rewrite that as a lit-style expression
 	// and another: static masquerading as local: how does this emerge? it's a DW_TAG_variable
@@ -148,13 +150,15 @@ struct frame_element
 		// and rewritten-in-terms-of-CFA'd of course
 	shared_ptr<loc_expr> p_effective_expr;
 	loc_expr::piece effective_expr_piece;
+	optional<Dwarf_Unsigned> piece_size_in_bytes() const
+	{ return effective_expr_piece.size_in_bytes(); }
 
 	optional<Dwarf_Signed> has_fixed_offset_from_frame_base() const;
 	/*optional<Dwarf_Signed>*/ bool has_fixed_register() const
-	{ return effective_expr_piece.op_count() == 1 && ( (effective_expr_piece.back().lr_atom >= DW_OP_reg0
-		&& effective_expr_piece.back().lr_atom <= DW_OP_reg31) || effective_expr_piece.back().lr_atom == DW_OP_regx ); }
+	{ return effective_expr_piece.op_count() == 1 && ( (effective_expr_piece.last_op().lr_atom >= DW_OP_reg0
+		&& effective_expr_piece.last_op().lr_atom <= DW_OP_reg31) || effective_expr_piece.last_op().lr_atom == DW_OP_regx ); }
 	/*optional<loc_expr>*/ bool has_value_function() const // strip DW_OP_stack_value at end? NO
-	{ return effective_expr_piece.op_count() >= 1 && effective_expr_piece.back().lr_atom == DW_OP_stack_value; }
+	{ return effective_expr_piece.op_count() >= 1 && effective_expr_piece.last_op().lr_atom == DW_OP_stack_value; }
 	                       // has_location implies has_value_function? just put deref at the end?
 
 	/* DW_OP_implicit_pointer means "our value is a pointer into some other
@@ -171,9 +175,9 @@ struct frame_element
 	has_implicit_pointer_value() const
 	{ return effective_expr_piece.op_count() >= 1 && (
 #ifdef DW_OP_implicit_pointer
-	effective_expr_piece.back().lr_atom == DW_OP_implicit_pointer ||
+	effective_expr_piece.last_op().lr_atom == DW_OP_implicit_pointer ||
 #endif
-	effective_expr_piece.back().lr_atom == DW_OP_GNU_implicit_pointer
+	effective_expr_piece.last_op().lr_atom == DW_OP_GNU_implicit_pointer
 	   ); }
 
 	//optional< vector<unsigned char> >
@@ -181,7 +185,7 @@ struct frame_element
 	has_implicit_literal_value() const
 	{ return effective_expr_piece.op_count() >= 1 && (
 #ifdef DW_OP_implicit_value
-	effective_expr_piece.back().lr_atom == DW_OP_implicit_value
+	effective_expr_piece.last_op().lr_atom == DW_OP_implicit_value
 	/* FIXME: how does libdwarf parse these? What about libdw? From my dwarf.h I see
     DW_OP_implicit_value = 0x9e, // DW_FORM_block follows opcode.
 	   ... so it might not be safe to assume the last expr_instr is the DW_OP_implicit_value */
@@ -210,7 +214,10 @@ struct frame_element
 		effective_expr_piece.op_count() > 0 && effective_expr_piece.first->lr_atom == DW_OP_addr; }
 
 	optional<Dwarf_Signed> is_saved_register() const
-	{ return m_caller_regnum != 0 ? m_caller_regnum : optional<Dwarf_Signed>(); }
+	{ return (m_caller_regnum && *m_caller_regnum != DW_FRAME_CFA_COL3)
+	  ? m_caller_regnum : optional<Dwarf_Signed>(); }
+	bool is_current_cfa() const
+	{ return (m_caller_regnum && *m_caller_regnum == DW_FRAME_CFA_COL3); }
 	iterator_df<with_dynamic_location_die> is_local() const { return m_local; }
 
 	/* When constructing, we always need to have a PC range:
@@ -219,9 +226,9 @@ struct frame_element
 private:
 	frame_element(Dwarf_Unsigned reg, loc_expr::piece const& piece, shared_ptr<loc_expr> whole_expr)
 	 : m_local(iterator_base::END), m_caller_regnum(reg), effective_expr_piece(piece),
-	   p_effective_expr(whole_expr) { assert(reg != 0); }
+	   p_effective_expr(whole_expr) {}
 	frame_element(iterator_df<with_dynamic_location_die> d, loc_expr::piece const& piece, shared_ptr<loc_expr> whole_expr)
-	 : m_local(std::move(d)), m_caller_regnum(0), effective_expr_piece(piece),
+	 : m_local(std::move(d)), m_caller_regnum(), effective_expr_piece(piece),
 	   p_effective_expr(whole_expr)
 	  { assert(m_local); }
 public:

@@ -116,7 +116,7 @@ optional<Dwarf_Signed> frame_element::has_fixed_offset_from_frame_base() const
 	/* OK, see if we get an address out. */
 	try
 	{
-		dwarf::expr::evaluator e(effective_expr_piece.copy(),
+		dwarf::expr::evaluator e(effective_expr_piece.copy_as_if_whole(),
 			m_local.spec_here(),
 			/* fb */ 0L,
 			{ 0 } /* push zero (a.k.a. the frame base) onto the initial stack */);
@@ -126,6 +126,7 @@ optional<Dwarf_Signed> frame_element::has_fixed_offset_from_frame_base() const
 		{
 			case dwarf::expr::evaluator::NAMED_REGISTER:
 				/* OK, the value lives in a register... we should have caught this! */
+				std::clog << "Troublesome expression: " << effective_expr_piece.copy_as_if_whole() << endl;
 				assert(false);
 				break;
 			case dwarf::expr::evaluator::ADDRESS: // the good one
@@ -164,7 +165,7 @@ optional<Dwarf_Signed> frame_element::has_fixed_offset_from_frame_base() const
 				<< std::hex << the_int << std::dec
 				<< ": "
 #endif
-				<< m_local.summary();
+				<< m_local.summary() << endl;
 #if 0
 		}
 #endif
@@ -173,13 +174,13 @@ optional<Dwarf_Signed> frame_element::has_fixed_offset_from_frame_base() const
 	catch (dwarf::expr::Not_supported)
 	{
 		cerr << "Warning: unsupported DWARF opcode when computing location for fp: "
-			<< m_local.summary();
+			<< m_local.summary() << endl;
 		return ret_t();
 	}
 	catch (...)
 	{
 		cerr << "Warning: something strange happened when computing location for fp: " 
-			<< m_local.summary();
+			<< m_local.summary() << endl;
 		return ret_t();
 	}
 	assert(false);
@@ -393,13 +394,9 @@ unsigned count_intervals(const frame_intervals_t& f)
 	for (auto i = f.begin(); i != f.end(); ++i, ++count);
 	return count;
 }
-template<typename _Key, typename _Compare = std::less<_Key>,
-	   typename _Alloc = std::allocator<_Key> >
-bool sanity_check_set(const std::set<_Key, _Compare, _Alloc>& s)
+bool sanity_check_frame_element(const allocs::tool::frame_element& t)
 {
-	unsigned count = 0;
-	for (auto i = s.begin(); i != s.end(); ++i, ++count);
-	return count == s.size();
+	return true; // FIXME: meaningful sanity check
 }
 #endif
 
@@ -518,10 +515,10 @@ frame_element::cfi_elements_for(core::Fde fde,
 		}
 	};
 	#define SANITY_CHECK_PRE(f) /* do { unsigned count = count_intervals(f); \
-		cerr << "Adding an interval (width " << (i.upper() - i.lower()) \
+		cerr << "Adding an interval (width " << (the_interval.upper() - the_interval.lower()) \
 			<< " to a map of size " << f.size() << ", count " << count << endl; */ \
 			do { for (auto i = f.begin(); i != f.end(); ++i) { \
-				assert(sanity_check_set(i->second)); \
+				assert(sanity_check_frame_element(i->second)); \
 			} } while (0)
 
 	#define SANITY_CHECK_POST(f) /* sanity_check_post(f, count); } while (0) */
@@ -537,96 +534,81 @@ frame_element::cfi_elements_for(core::Fde fde,
 		if (!found_col /*|| !is_callee_save_register(col)*/) {} // s << std::left << "u" << std::right;
 		else
 		{
+			auto the_interval = boost::icl::discrete_interval<Dwarf_Addr>::right_open(
+				fde_lopc,
+				fde_hipc
+			);
+			int regnum; // used by saved-in-register cases
+			shared_ptr<loc_expr> p_expr; // used by all non-trivial cases
+			int saved_offset; // used by saved-at-offset-from-cfa, val-is-offset-from-cfa
 			switch (found_col->second.k)
 			{
 				case FrameSection::register_def::INDETERMINATE:
 				case FrameSection::register_def::UNDEFINED: 
 					break;
-
-				case FrameSection::register_def::REGISTER: {
+				case FrameSection::register_def::REGISTER:
 					// caller's register "col" is saved in callee register "regnum"
-					int regnum = found_col->second.register_plus_offset_r().first;
-					shared_ptr<loc_expr> p_expr = make_shared<loc_expr>(loc_expr(
+					regnum = found_col->second.register_plus_offset_r().first;
+					goto saved_in_regnum;
+				case FrameSection::register_def::SAME_VALUE:
+					// "This register has not been modified from the previous frame.
+					// (By convention, it is preserved by the callee, but the callee
+					// has not modified it.)"
+					// In other words, "whatever the register number they say I am,
+					// that's what I am."
+					regnum = col;
+					goto saved_in_regnum;
+				saved_in_regnum:
+					assert(regnum <= 31);
+					p_expr = make_shared<loc_expr>(loc_expr(
 						{ (expr_instr) { .lr_atom = DW_OP_reg0 + regnum } }));
-					out.insert(make_pair(
-						boost::icl::discrete_interval<Dwarf_Addr>::right_open(
-							fde_lopc,
-							fde_hipc
-						),
-						frame_element(regnum, p_expr->all_pieces().at(0), p_expr)
-					));
-#if 0
-					SANITY_CHECK_PRE(out);
-					out += make_pair(
-						boost::icl::discrete_interval<Dwarf_Addr>::right_open(
-							fde_lopc,
-							fde_hipc
-						),
-						set<frame_element>({ v })
-					);
-					SANITY_CHECK_POST(out);
-#else
-	// FIXME: do as below
-#endif
-				} break;
-
-				case FrameSection::register_def::SAVED_AT_OFFSET_FROM_CFA: {
-					int saved_offset = found_col->second.saved_at_offset_from_cfa_r();
+					goto saved_with_loc_expr;
+				case FrameSection::register_def::SAVED_AT_OFFSET_FROM_CFA:
 					// caller's register "col" is saved at "saved_offset" from CFA
-					//frame_element v(col,
-					//	);
-					//set<frame_element> singleton_set = { v };
-					//singleton_set.insert(
-					//    make_pair(iterator_base::END /* not a with_dynamic_location_die */,
-					//              make_pair(regnum /* yes a saved caller reg */,
-					//                (loc_expr) 
-					//);
-#if 0
-					SANITY_CHECK_PRE(out);
-					out += make_pair(
-						boost::icl::discrete_interval<Dwarf_Addr>::right_open(
-							fde_lopc,
-							fde_hipc
-						),
-						singleton_set
-					);
-					SANITY_CHECK_POST(out);
-#elif 0
-					maybe_add(
-						boost::icl::discrete_interval<Dwarf_Addr>::right_open(
-							fde_lopc,
-							fde_hipc
-						),
-						// FIXME: hmm, no with_dynamic_location_die for us --
-						// need the pair thing we came up with
-						// frame_element( ),
-						v
-					);
-#else
-					shared_ptr<loc_expr> p_expr = make_shared<loc_expr>(loc_expr(
+					saved_offset = found_col->second.saved_at_offset_from_cfa_r();
+					goto offset_from_cfa_cases;
+				case FrameSection::register_def::VAL_IS_OFFSET_FROM_CFA:
+					// caller's register "col" is not saved, but has the value computable
+					// as "cfa + integer-value"
+					saved_offset = found_col->second.val_is_offset_from_cfa_r();
+					goto offset_from_cfa_cases;
+				offset_from_cfa_cases:
+					p_expr = make_shared<loc_expr>(loc_expr(
 					 /* expr */ { (expr_instr) { .lr_atom = DW_OP_call_frame_cfa },
 						  (expr_instr) { .lr_atom = DW_OP_consts, .lr_number = saved_offset },
 						  (expr_instr) { .lr_atom = DW_OP_plus } }
 					));
-					out.insert(make_pair(
-						boost::icl::discrete_interval<Dwarf_Addr>::right_open(
-							fde_lopc,
-							fde_hipc
-						),
-						frame_element(
-							/* caller reg */ col, p_expr->all_pieces().at(0), p_expr
-						)
-					));
-#endif
-				} break;
-	// FIXME: yes really support these cases vvv
+					if (found_col->second.k == FrameSection::register_def::VAL_IS_OFFSET_FROM_CFA)
+					{ p_expr->push_back((expr_instr) { .lr_atom = DW_OP_stack_value }); }
+					goto saved_with_loc_expr;
 				case FrameSection::register_def::SAVED_AT_EXPR:
-					// we can't represent this. :-(
-					break;
-				case FrameSection::register_def::VAL_IS_OFFSET_FROM_CFA:
-				case FrameSection::register_def::VAL_OF_EXPR: 
+					// caller's register "col" is saved at location given by <expr>
+					p_expr = make_shared<loc_expr>(loc_expr(
+						found_col->second.saved_at_expr_r()
+					));
+					goto saved_with_loc_expr;
+				case FrameSection::register_def::VAL_OF_EXPR:
+					// caller's register "col" is not saved, but has the value computable
+					// as "<expr>"
+					p_expr = make_shared<loc_expr>(loc_expr(
+						found_col->second.val_of_expr_r()
+					));
+					p_expr->push_back((expr_instr) { .lr_atom = DW_OP_stack_value });
+					goto saved_with_loc_expr;
+				saved_with_loc_expr: {
+					/* The expr might have multiple DW_OP_piece-s, in the cases where
+					 * we did not just create it ourselves. */
+					auto pieces = p_expr->all_pieces();
+					for (auto i_piece = pieces.begin();
+						i_piece != pieces.end(); ++i_piece)
+					{
+						SANITY_CHECK_PRE(out);
+						out.insert(make_pair(the_interval,
+							frame_element(/* caller reg */ col, *i_piece, p_expr)));
+						SANITY_CHECK_POST(out);
+					}
+				} break;
 				default:
-					// FIXME: is it useful for us to have VAL_IS and VAL_OF?
 					break;
 			}
 		}
