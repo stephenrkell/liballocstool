@@ -23,6 +23,7 @@ build-dwarfidl: dwarfidl/config.status
 	$(MAKE) -C dwarfidl
 
 clean::
+	$(MAKE) -C dwarfidl/contrib clean
 	if test -e dwarfidl/Makefile; then $(MAKE) -C dwarfidl clean; fi
 
 CONFIG_MK += \nDWARFIDL_CXXFLAGS += -I$(CONTRIB)/dwarfidl/include
