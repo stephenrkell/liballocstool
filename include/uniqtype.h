@@ -27,21 +27,9 @@ of or in connection with the use or performance of this software.
 
 #include "uniqtype-defs.h"
 
-#include <elf.h>
-#include <assert.h>
-#include <string.h>
-#include <stdio.h>
-#include <dlfcn.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-// #include "dlbind.h"
-void *dlcreate(const char *libname);
-void *dlreload(void *handle);
-void *dlalloc(void *l, size_t sz, unsigned flags);
-void *dlbind(void *lib, const char *symname, void *obj, size_t len, Elf64_Word type);
 
 /* We want this inline to be COMDAT'd and global-overridden to a unique run-time instance.
  * But HMM, we will get the same problem as with uniqtypes: between the preloaded library
