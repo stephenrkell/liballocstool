@@ -225,7 +225,8 @@ void write_uniqtype_close(std::ostream& o,
 	const string& mangled_name,
 	boost::optional<unsigned> n_contained = boost::optional<unsigned>());
 
-int dump_usedtypes(const std::vector<std::string>& fnames, std::ostream& out, std::ostream& cerr);
+int dump_usedtypes(const std::vector<std::string>& fnames, std::ostream& out, std::ostream& cerr,
+	bool continue_on_error = false);
 
 string 
 name_for_complement_base_type(iterator_df<base_type_die> base_t);

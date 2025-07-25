@@ -1746,7 +1746,8 @@ static void for_each_uniqtype_reference_in(const string &filename,
 	}
 	fclose(in);
 }
-int dump_usedtypes(const vector<string>& fnames, std::ostream& out, std::ostream& err)
+int dump_usedtypes(const vector<string>& fnames, std::ostream& out, std::ostream& err,
+	bool continue_on_error /* = false */)
 {
 	using core::root_die;
 	using std::unique_ptr;
@@ -1768,7 +1769,7 @@ int dump_usedtypes(const vector<string>& fnames, std::ostream& out, std::ostream
 		if (!infstream) 
 		{
 			err << "Could not open file " << fname << endl;
-			return 1;
+			if (continue_on_error) continue; else return 1;
 		}
 
 		try
@@ -1778,11 +1779,22 @@ int dump_usedtypes(const vector<string>& fnames, std::ostream& out, std::ostream
 		catch (lib::No_entry)
 		{
 			rs[i] = nullptr;
-			continue;
+			continue; // it's never an error to contain no DWARF
 		}
 		root_die &r = *rs[i];
-		get_types_by_codeless_uniqtype_name(types_by_codeless_uniqtype_name, 
-			r.begin(), r.end());
+
+		try
+		{
+			get_types_by_codeless_uniqtype_name(types_by_codeless_uniqtype_name, 
+				r.begin(), r.end());
+		}
+		catch (lib::Error)
+		{
+			err << (continue_on_error ? "Warning:" : "Error:")
+			    << " could not process DWARF types for file " << fnames[i] << endl;
+			rs[i] = nullptr;
+			if (continue_on_error) continue; else return 2;
+		}
 		
 		auto f = [&](const string& key) {
 			// FIXME: escape single quotes
