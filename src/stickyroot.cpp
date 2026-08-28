@@ -23,8 +23,8 @@
 extern "C" {
 #include <sys/mman.h>
 #include <link.h>
-#include "relf.h"
 }
+#include "relf.h" /* is C++-friendly by itself */
 
 #include "stickyroot.hpp"
 
