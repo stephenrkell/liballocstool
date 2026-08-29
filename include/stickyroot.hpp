@@ -292,9 +292,26 @@ public:
 		get_summary(bool symtab_is_external, opt<unsigned> maybe_expected_size = opt<unsigned>()) const;
 		iterator_df<program_element_die> get_die() const;
 		iterator_df<type_die> type_from_die(iterator_df<program_element_die> maybe_die) const
-		{ return (maybe_die && maybe_die.is_a<variable_die>()) ? maybe_die.as_a<variable_die>()->find_type()
-			 : (maybe_die && maybe_die.is_a<subprogram_die>()) ? maybe_die.as_a<type_die>()
-			 :  iterator_df<type_die>(iterator_base::END);
+		{
+			if (!maybe_die) return iterator_df<type_die>(iterator_base::END);
+			if (maybe_die.is_a<variable_die>()) return maybe_die.as_a<variable_die>()->find_type();
+			if (maybe_die.is_a<subprogram_die>())
+			{
+				if (!maybe_die.has_attr(DW_AT_type)
+					&& maybe_die.has_attr(DW_AT_abstract_origin))
+				{
+					encap::attribute_map attrs = maybe_die.copy_attrs();
+					auto i_attr = attrs.find(DW_AT_abstract_origin);
+					if (i_attr != attrs.end())
+					{
+						auto origin = i_attr->second.get_refiter();
+						if (origin && origin.is_a<subprogram_die>())
+							return origin.as_a<type_die>();
+					}
+				}
+				return maybe_die.as_a<type_die>();
+			}
+			return iterator_df<type_die>(iterator_base::END);
 		}
 		iterator_df<type_die> get_type() const
 		{ return get_die() ? type_from_die(get_die()) : iterator_df<type_die>(); }
