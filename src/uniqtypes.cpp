@@ -771,38 +771,31 @@ void write_master_relation(master_relation_t& r,
 
 		/* We can also be *variable-length*. In this case we output a pos_maxoff of -1
 		 * i.e. maximum-unsigned-value. */
-		if (emit_subobject_names)
+		if (emit_subobject_names && i_vert->second.is_a<with_data_members_die>())
 		{
-			out << "const char *" << mangled_name << "_subobj_names[] ";
-			out << attributes_for_uniqtype(mangled_name, /* weak */ true,
+			out << "static const char *" << mangled_name << "_subobj_names[] ";
+			out << attributes_for_uniqtype(mangled_name, /* weak */ false,
 				/* include section */ !dependent_on_incomplete);
-			if (i_vert->second.is_a<with_data_members_die>())
+			out << " = { ";
+			unsigned num = 0;
+			for (auto i_i_edge = real_members.begin(); i_i_edge != real_members.end(); ++i_i_edge, ++num)
 			{
-				out << " = { ";
-				unsigned num = 0;
-				for (auto i_i_edge = real_members.begin(); i_i_edge != real_members.end(); ++i_i_edge, ++num)
-				{
-					auto i_edge = i_i_edge->as_a<member_die>();
+				auto i_edge = i_i_edge->as_a<member_die>();
 
-					if (i_edge.name_here())
-					{
-						string name = *i_edge.name_here();
-						out << "\"" << name << "\"";
-					}
-					else
-					{
-						/* FIXME: do something nicer */
-						out << "\"_" << num << "\"";
-					}
-					/* always output a comma */
-					out << ", ";
+				if (i_edge.name_here())
+				{
+					string name = *i_edge.name_here();
+					out << "\"" << name << "\"";
 				}
-				out << "(void*)0 };\n";
+				else
+				{
+					/* FIXME: do something nicer */
+					out << "\"_" << num << "\"";
+				}
+				/* always output a comma */
+				out << ", ";
 			}
-			else
-			{
-				out << "= { (void*)0 };\n";
-			}
+			out << "(void*)0 };\n";
 		}
 		
 		unsigned contained_length = 1;
@@ -896,9 +889,13 @@ void write_master_relation(master_relation_t& r,
 			auto k1 = codeful_name(t->get_type());
 			string mangled_name1 = mangle_typename(k1);
 			write_uniqtype_related_pointee_type(out, mangled_name1);
-			auto k2 = codeful_name(ultimate_pointee);
-			string mangled_name2 = mangle_typename(k2);
-			write_uniqtype_related_ultimate_pointee_type(out, mangled_name2);
+			if (!is_generic && indir_level > 1)
+			{
+				auto k2 = codeful_name(ultimate_pointee);
+				string mangled_name2 = mangle_typename(k2);
+				write_uniqtype_related_ultimate_pointee_type(out, mangled_name2);
+				++contained_length;
+			}
 		}
 		else if (i_vert->second.is_a<type_describing_subprogram_die>())
 		{
